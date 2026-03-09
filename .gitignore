@@ -1,0 +1,16 @@
+*.pyc
+.vscode
+output*
+build
+diff_rasterization/diff_rast.egg-info
+diff_rasterization/dist
+tensorboard_3d
+screenshots
+tmp
+submodules/geer-rasterizer/build/
+submodules/geer-rasterizer/diff_gaussian_rasterization.egg-info/
+submodules/geer-rasterizer/dist/
+data/aria/datasets
+data/aria/scannetpp_formatted
+data/scnt/datasets
+ckpt*
