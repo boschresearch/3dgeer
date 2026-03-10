@@ -156,7 +156,7 @@ bash scripts/eval_scnt.sh <SCENE_ID> <DATA_ROOT> <CKPT_DIR> <MODE>
 
 **Arguments:**
 
-`SCENE_ID` : scene name (e.g. steakhouse, 1d003b07bd/dslr)
+`SCENE_ID` : scene name (e.g. `steakhouse`, `1d003b07bd/dslr`)
 
 `DATA_ROOT` : root directory of the formatted dataset
 
@@ -176,7 +176,7 @@ bash scripts/render_scnt.sh steakhouse data/aria/scannetpp_formatted ckpt/aria K
 bash scripts/eval_scnt.sh steakhouse data/aria/scannetpp_formatted ckpt/aria KB
 bash scripts/eval_scnt.sh steakhouse data/aria/scannetpp_formatted ckpt/aria BEAP
 ```
-Scannet++ dataset
+ScanNet++ dataset
 ```bash
 bash scripts/render_scnt.sh 1d003b07bd/dslr data/scnt/datasets ckpt/scnt KB
 bash scripts/eval_scnt.sh 1d003b07bd/dslr data/scnt/datasets ckpt/scnt KB
@@ -191,7 +191,7 @@ bash scripts/eval_scnt.sh truck data/tt/datasets ckpt/tt BEAP
 
 ### 4. Available Checkpoints
 You can download the pre-trained checkpoints for the scenes shown on our project webpage:
-- Scannet++: Kitchen, Lab, Officeroom, Bedroom
+- ScanNet++: Kitchen, Lab, Officeroom, Bedroom
 - ZipNeRF: Alameda, Berlin, London, NYC
 - Aria: Livingroom, Steakhouse, Garden
 - Tank and Temples: Train, Truck
