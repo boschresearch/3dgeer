@@ -145,6 +145,7 @@ To train 3DGEER on scannet++ data:
 ```bash
 bash ./scripts/train_scnt.sh
 ```
+> full training scripts will be released soon.
 
 ### 3. Rendering & Evaluation
 To render high-quality images and compute PSNR/SSIM/LPIPS:
@@ -152,37 +153,61 @@ To render high-quality images and compute PSNR/SSIM/LPIPS:
 bash scripts/render_scnt.sh <SCENE_ID> <DATA_ROOT> <CKPT_DIR> <MODE>
 bash scripts/eval_scnt.sh <SCENE_ID> <DATA_ROOT> <CKPT_DIR> <MODE>
 ```
-**Example:**
-```bash
-bash scripts/render_scnt.sh garden data/aria/scannetpp_formatted ckpt/aria KB
-bash scripts/render_scnt.sh 1d003b07bd/dslr data/scnt/datasets ckpt/scnt PH
-```
-```bash
-bash scripts/eval_scnt.sh garden data/aria/scannetpp_formatted ckpt/aria BEAP
-bash scripts/eval_scnt.sh 1d003b07bd/dslr data/scnt/datasets ckpt/scnt BEAP
-```
+
 **Arguments:**
 
-`SCENE_ID` : scene name (e.g. garden)
+`SCENE_ID` : scene name (e.g. steakhouse, 1d003b07bd/dslr)
 
 `DATA_ROOT` : root directory of the formatted dataset
 
 `CKPT_DIR` : directory containing the trained model checkpoint
 
-`MODE` : render mode, e.g, BEAP, KB, PH
+`MODE` : rendering backend, (`BEAP`, `KB` or `PH`)
+
+> set `DIST_SCALING` as 0 in the shell to render EQ under KB mode.
+> enlarge the value of `FOCAL_SCALING` to test extreme large FoV.
+> For fair comparison, we recommend evaluating with `BEAP` mode, which ensures consistent metric computation across different rendering backends.
+
+**Example:**
+
+Aria dataset
+```bash
+bash scripts/render_scnt.sh steakhouse data/aria/scannetpp_formatted ckpt/aria KB
+bash scripts/eval_scnt.sh steakhouse data/aria/scannetpp_formatted ckpt/aria KB
+bash scripts/eval_scnt.sh steakhouse data/aria/scannetpp_formatted ckpt/aria BEAP
+```
+Scannet++ dataset
+```bash
+bash scripts/render_scnt.sh 1d003b07bd/dslr data/scnt/datasets ckpt/scnt KB
+bash scripts/eval_scnt.sh 1d003b07bd/dslr data/scnt/datasets ckpt/scnt KB
+bash scripts/eval_scnt.sh 1d003b07bd/dslr data/scnt/datasets ckpt/scnt BEAP
+```
+Tanks and Temples dataset
+```bash
+bash scripts/render_scnt.sh truck data/tt/datasets ckpt/tt PH
+bash scripts/eval_scnt.sh truck data/tt/datasets ckpt/tt PH
+bash scripts/eval_scnt.sh truck data/tt/datasets ckpt/tt BEAP
+```
 
 ### 4. Available Checkpoints
-You can download the pre-trained checkpoints to test rendering for the scenes shown in our Webpage:
-- [Scannet++: Kitchen, Lab, Officeroom, Bedroom](https://huggingface.co/datasets/ZixunH/3DGEER_ckpt)
-- [ZipNeRF: Alameda, Berlin, London, NYC](https://huggingface.co/datasets/ZixunH/3DGEER_ckpt)
-- [Aria: Livingroom, Steakhouse](https://huggingface.co/datasets/ZixunH/3DGEER_ckpt)
-- [Customized Parking: Bosch Center](https://huggingface.co/datasets/ZixunH/3DGEER_ckpt)
+You can download the pre-trained checkpoints for the scenes shown on our project webpage:
+- Scannet++: Kitchen, Lab, Officeroom, Bedroom
+- ZipNeRF: Alameda, Berlin, London, NYC
+- Aria: Livingroom, Steakhouse
+- Tank and Temples: Train, Truck
+- Customized Parking: Bosch Center
+
+Download from HuggingFace:
+https://huggingface.co/datasets/ZixunH/3DGEER_ckpt
 
 ## 🙏Special Extension
 <p align="center">
   <a href='https://github.com/boschresearch/3dgeer/tree/gsplat-geer'><img src="assets/deliverypath.jpg" alt="teaser" style="width: 100%;"></a>
   3DGEER supports the opensource community with <code>gsplat</code> integration. <br />Check out our <a href='https://github.com/boschresearch/3dgeer/tree/gsplat-geer'><code>gsplat-geer</code></a> branch for details.
 </p>
+
+## ⛽️Contributing
+Feel free to drop a pull request whenever!
 
 ## 👀Visuals ([More](https://zixunh.github.io/3d-geer))
 
@@ -227,4 +252,4 @@ You can download the pre-trained checkpoints to test rendering for the scenes sh
 
 ## 💡License
 3DGEER is released under the AGPL-3.0 License. See the [LICENSE](./LICENSE.md) file for details.
-This project is built upon 3D Gaussian Splatting by Inria. We thank the authors for their excellent open-source work. The original license and copyright notice are included in this repository, see the file [3dgs-license.txt](./3dgs-license.txt).
+This project is built upon [3D Gaussian Splatting by Inria](https://github.com/graphdeco-inria/gaussian-splatting). We thank the authors for their excellent open-source work. The original license and copyright notice are included in this repository, see the file [3dgs-license.txt](./3dgs-license.txt).

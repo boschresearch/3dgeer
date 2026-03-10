@@ -13,4 +13,6 @@ submodules/geer-rasterizer/dist/
 data/aria/datasets
 data/aria/scannetpp_formatted
 data/scnt/datasets
+data/tt/datasets
+data/*/datasets
 ckpt*

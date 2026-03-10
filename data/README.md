@@ -55,3 +55,7 @@ This script will:
 - Convert binary model to TXT format  
 - Remove `.bin` files  
 - Produce ScanNet++-compatible directory structure
+
+## 3. Tanks and Temples
+Download Tanks and Temples data from: https://www.tanksandtemples.org/download/
+
