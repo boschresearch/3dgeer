@@ -98,7 +98,6 @@ def compute_error_map(rays, cam_model, grid, H, W, device="cpu"):
     return error_map
 
 
-
 def compute_max_distance_to_border(image_size_component: float, principal_point_component: float) -> float:
     """Given an image size component (x or y) and corresponding principal point component (x or y),
     returns the maximum distance (in image domain units) from the principal point to either image boundary."""
@@ -132,13 +131,13 @@ def run(args):
     scannetpp_data_path = args.path
     target_scene_names = args.scenes.split(",")
 
-    H = int(1168)
-    W = int(1752)
-    u_grid, v_grid = np.meshgrid(np.arange(W), np.arange(H))
-    grid = torch.from_numpy(np.stack([u_grid, v_grid], axis=0)).float()  # [2,H,W]
-    grid_flat = grid.reshape(2, -1)  # [2,N]
-    points = grid_flat.T  # [N,2]
-    image_points = points.float()
+    # H = int(1168)
+    # W = int(1752)
+    # u_grid, v_grid = np.meshgrid(np.arange(W), np.arange(H))
+    # grid = torch.from_numpy(np.stack([u_grid, v_grid], axis=0)).float()  # [2,H,W]
+    # grid_flat = grid.reshape(2, -1)  # [2,N]
+    # points = grid_flat.T  # [N,2]
+    # image_points = points.float()
 
     for scene_name in target_scene_names:
         scene_dir = os.path.join(scannetpp_data_path, scene_name)
@@ -151,9 +150,17 @@ def run(args):
         # Build camera model
         focal_length = (scene_info['fl_x'] * args.focal_scaling, scene_info['fl_y'] * args.focal_scaling)
         principal_point = (scene_info['cx'], scene_info['cy'])
+        W = scene_info['w']
+        H = scene_info['h']
         resolution = (W, H)
         radial_coeffs = (scene_info['k1'] * args.distortion_scaling, scene_info['k2'] * args.distortion_scaling, \
                          scene_info['k3'] * args.distortion_scaling, scene_info['k4'] * args.distortion_scaling)
+        
+        u_grid, v_grid = np.meshgrid(np.arange(W), np.arange(H))
+        grid = torch.from_numpy(np.stack([u_grid, v_grid], axis=0)).float()  # [2,H,W]
+        grid_flat = grid.reshape(2, -1)  # [2,N]
+        points = grid_flat.T  # [N,2]
+        image_points = points.float()
 
         max_radius_pixels = compute_max_radius(np.array(resolution).astype(np.float64), np.array(principal_point))
         fov_angle_x = 2.0 * max_radius_pixels / focal_length[0]

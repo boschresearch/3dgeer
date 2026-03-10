@@ -149,11 +149,16 @@ bash ./scripts/train_scnt.sh
 ### 3. Rendering & Evaluation
 To render high-quality images and compute PSNR/SSIM/LPIPS:
 ```bash
+bash scripts/render_scnt.sh <SCENE_ID> <DATA_ROOT> <CKPT_DIR> <MODE>
 bash scripts/eval_scnt.sh <SCENE_ID> <DATA_ROOT> <CKPT_DIR> <MODE>
 ```
 **Example:**
 ```bash
-bash scripts/eval_scnt.sh garden data/aria/scannetpp_formatted ckpt/aria KB
+bash scripts/render_scnt.sh garden data/aria/scannetpp_formatted ckpt/aria KB
+bash scripts/render_scnt.sh 1d003b07bd/dslr data/scnt/datasets ckpt/scnt PH
+```
+```bash
+bash scripts/eval_scnt.sh garden data/aria/scannetpp_formatted ckpt/aria BEAP
 bash scripts/eval_scnt.sh 1d003b07bd/dslr data/scnt/datasets ckpt/scnt BEAP
 ```
 **Arguments:**

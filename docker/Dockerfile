@@ -19,7 +19,6 @@ RUN git clone -b master https://gitlab.inria.fr/sibr/sibr_core.git \
     && git clone https://gitlab.inria.fr/bkerbl/simple-knn.git 
 COPY submodules/geer-rasterizer /workspace/3dgs_dependency/geer-rasterizer
 
-
 WORKDIR /workspace/3dgs_dependency/sibr_core
 RUN git reset --hard d8856f6
 WORKDIR /workspace/3dgs_dependency/simple-knn
