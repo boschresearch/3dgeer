@@ -191,11 +191,11 @@ bash scripts/eval_scnt.sh truck data/tt/datasets ckpt/tt BEAP
 
 ### 4. Available Checkpoints
 You can download the pre-trained checkpoints for the scenes shown on our project webpage:
-- ScanNet++: Kitchen, Lab, Officeroom, Bedroom
-- ZipNeRF: Alameda, Berlin, London, NYC
-- Aria: Livingroom, Steakhouse, Garden
-- Tank and Temples: Train, Truck
-- Customized Parking: Bosch Center
+- `ScanNet++`: Kitchen, Lab, Officeroom, Bedroom
+- `ZipNeRF`: Alameda, Berlin, London, NYC
+- `Aria`: Livingroom, Steakhouse, Garden
+- `Tank and Temples`: Train, Truck
+- `Customized Parking`: Bosch Center
 
 Download from HuggingFace:
 https://huggingface.co/datasets/ZixunH/3DGEER_ckpt
