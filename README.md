@@ -95,7 +95,7 @@ The full CUDA implementation can be found here: [./submodules/geer-rasterizer/](
   </div>
 
 #### Conda Based Installation
-Following the 3dgs dependencies https://github.com/graphdeco-inria/gaussian-splatting, and then run the following command to replace the CUDA rasterizer for a geer-version 3dgs environment:
+Following the 3dgs dependencies https://github.com/graphdeco-inria/gaussian-splatting to install the 3dgs environment, and then run the following command to replace the `diff-gaussian-rasterization` for using a geer-version CUDA rasterizer:
 ```sh
 pip install ./submodules/geer-rasterizer
 ```
@@ -164,8 +164,8 @@ bash scripts/eval_scnt.sh <SCENE_ID> <DATA_ROOT> <CKPT_DIR> <MODE>
 
 `MODE` : rendering backend, (`BEAP`, `KB` or `PH`)
 
-> set `DIST_SCALING` as 0 in the shell to render EQ under KB mode.
-> enlarge the value of `FOCAL_SCALING` to test extreme large FoV.
+> Set `DIST_SCALING` as 0 in the shell to render EQ under KB mode;
+> Enlarge the value of `FOCAL_SCALING` to test extreme large FoV;
 > For fair comparison, we recommend evaluating with `BEAP` mode, which ensures consistent metric computation across different rendering backends.
 
 **Example:**
@@ -193,7 +193,7 @@ bash scripts/eval_scnt.sh truck data/tt/datasets ckpt/tt BEAP
 You can download the pre-trained checkpoints for the scenes shown on our project webpage:
 - Scannet++: Kitchen, Lab, Officeroom, Bedroom
 - ZipNeRF: Alameda, Berlin, London, NYC
-- Aria: Livingroom, Steakhouse
+- Aria: Livingroom, Steakhouse, Garden
 - Tank and Temples: Train, Truck
 - Customized Parking: Bosch Center
 
