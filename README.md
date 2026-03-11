@@ -29,6 +29,7 @@ Bosch Center for AI, Bosch Research North America
   <img src="https://img.shields.io/badge/Video-YouTube-yellow" alt="Video">
 </a>
 
+<br />
 <p align="center">
   <a href='https://zixunh.github.io/3d-geer'>
   <img src="assets/teaser.gif" alt="teaser" style="width: 100%;">
