@@ -6,7 +6,7 @@
 Bosch Center for AI, Bosch Research North America
 
 <a href="https://arxiv.org/abs/2505.24053"><img src='https://img.shields.io/badge/arXiv-3DGEER-red' alt='ArXiv'></a>
-<a href="https://openreview.net/forum?id=4voMNlRWI7"><img src='https://img.shields.io/badge/OpenReview-3DGEER-orange' alt='OpenReview'></a>
+<a href="https://openreview.net/forum?id=4voMNlRWI7"><img src='https://img.shields.io/badge/OpenReview_(Top_1%_score)-3DGEER-orange' alt='OpenReview'></a>
 <a href="https://iclr.cc/virtual/2026/poster/10011512"><img src='https://img.shields.io/badge/ICLR_2026-3DGEER-blue' alt='ICLR 2026'></a>
 <a href='https://zixunh.github.io/3d-geer/'><img src='https://img.shields.io/badge/Project_Page-3DGEER-green' alt='Project Page'></a>
 <a href='https://www.youtube.com/watch?v=Grl9jSMIgds'><img src='https://img.shields.io/badge/Video-3DGEER-yellow' alt='Video'></a>
@@ -88,6 +88,8 @@ The full CUDA implementation can be found here: [./submodules/geer-rasterizer/](
     <img src="assets/forward2backward.gif" width="60%">
   </div>
 
+#### Key Insights: Fixing the Math Behind Gaussian Association
+
 - Particle Bounding Frustum: Efficient AABB for ray–particle association. (See [paper](https://arxiv.org/pdf/2505.24053) Appendix D for the math.)
 
   <div align="center">
@@ -145,7 +147,7 @@ To train 3DGEER on scannet++ data:
 ```bash
 bash ./scripts/train_scnt.sh
 ```
-> full training scripts will be released soon.
+> full training codes and scripts will be released soon.
 
 ### 3. Rendering & Evaluation
 To render high-quality images and compute PSNR/SSIM/LPIPS:
@@ -188,6 +190,7 @@ bash scripts/render_scnt.sh truck data/tt/datasets ckpt/tt PH
 bash scripts/eval_scnt.sh truck data/tt/datasets ckpt/tt PH
 bash scripts/eval_scnt.sh truck data/tt/datasets ckpt/tt BEAP
 ```
+> Please ensure that the corresponding ground truth is used. For example, evaluating extreme KB images using the original KB images as ground truth is invalid due to mismatched distortion parameters.
 
 ### 4. Available Checkpoints
 You can download the pre-trained checkpoints for the scenes shown on our project webpage:
