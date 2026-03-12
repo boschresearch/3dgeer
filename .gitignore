@@ -124,6 +124,7 @@ compile_commands.json
 data/aria/datasets
 data/aria/scannetpp_formatted
 data/scnt/datasets
+data/*/datasets
 ckpt*
 results
 output

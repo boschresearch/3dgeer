@@ -67,9 +67,9 @@ CUDA_VISIBLE_DEVICES=0 python simple_viewer.py --with_geer --with_eval3d --ckpt 
 
 ### Institution Acknowledgements
 <p align="left">
-  <img width="200" src="https://github.com/user-attachments/assets/88a9f60e-78d0-4e59-968c-aa1c548a0ea5" alt="Bosch Logo" />
+  <img width="200" src="assets/bosch-logo.png" alt="Bosch Logo" />
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <img width="200" src="https://github.com/user-attachments/assets/ea536c33-15c3-4546-b7ae-b56915ab51f3" alt="Stanford Logo" />
+  <img width="200" src="assets/stanford-logo.png" alt="Stanford Logo" />
 </p>
 
 <p align="left">
