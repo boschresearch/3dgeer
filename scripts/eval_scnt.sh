@@ -33,7 +33,8 @@ python render.py \
     --sample_step ${STEP_EVAL} \
     --fov_mod ${FOVMOD_EVAL} \
     --train_test_exp \
-    --mask_path ${DATASET_DIR}/${BEAP_DIR_EVAL}/${EVAL_MASK_FN}
+    --mask_path ${DATASET_DIR}/${BEAP_DIR_EVAL}/${EVAL_MASK_FN} \
+    --near_threshold 0.2
 
 echo "Wrapping back to origianal space for evaluation"
 python data/scnt/scnt_raymap_dac.py \
