@@ -40,6 +40,11 @@ __device__ const float SH_C3[] = {
 	-0.5900435899266435f
 };
 
+__device__ const float ut_alpha = 1.0f;
+__device__ const float ut_beta = 2.0f;
+__device__ const float ut_kappa = 0.0f;
+__device__ const float ut_lambda = ut_alpha * ut_alpha * (3.f + ut_kappa) - 3.f;
+
 __device__ __forceinline__ float sq(float x) { return x * x; }
 __device__ __forceinline__ float cube(float x) { return x * x * x; }
 
@@ -52,6 +57,14 @@ __device__ __forceinline__ float3 cross(const float3 &a, const float3 &b) {
     return make_float3(a.y * b.z - a.z * b.y, 
                        a.z * b.x - a.x * b.z, 
                        a.x * b.y - a.y * b.x);
+}
+
+__device__ __forceinline__ float2 divide_z(const glm::vec3& v) {
+    return make_float2(v.x / v.z, v.y / v.z);
+}
+
+__device__ __forceinline__ float2 atan(const float2& v) {
+	return make_float2(atan(v.x), atan(v.y));
 }
 
 __device__ __forceinline__ float3 toFloat3(const glm::vec3& v) {

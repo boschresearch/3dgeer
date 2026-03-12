@@ -53,7 +53,7 @@ python data/scnt/scnt_beap2kb.py --path ${DATASET_DIR} \
 python metrics.py \
     --block_mask \
     -m ${OUTPUT_DIR} --use_remap \
-    --iters ${ITERS_NUM} \
+    --iters ${ITERS_NUM}
 
 elif [ "$MODE" = "KB" ]; then
 
@@ -92,7 +92,7 @@ python metrics.py \
     -m ${OUTPUT_DIR} \
     --block_mask \
     --iters ${ITERS_NUM} \
-    --custom_gt ${CKPT_DIR}/${SCENE_ID}/test/ours_${ITERS_NUM}/gt \
+    --custom_gt ${CKPT_DIR}/${SCENE_ID}/test/ours_${ITERS_NUM}/gt
 
 elif [ "$MODE" = "PH" ]; then
 
@@ -118,7 +118,7 @@ python metrics.py \
     -m ${OUTPUT_DIR} \
     --block_mask \
     --iters ${ITERS_NUM} \
-    --custom_gt ${CKPT_DIR}/${SCENE_ID}/test/ours_${ITERS_NUM}/gt \
+    --custom_gt ${CKPT_DIR}/${SCENE_ID}/test/ours_${ITERS_NUM}/gt
 
 else
 echo "Unknown MODE: $MODE"

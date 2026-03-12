@@ -254,7 +254,7 @@ __device__ bool computePBF(
     pbf.w = _upper;
 
 	// If half-extend is negative, return and do not compute the omni
-	if (neg) return;
+	if (neg) return false;
 
 	// Omni mapping for AABB
 	float xi = 1.0;
@@ -345,7 +345,425 @@ __device__ bool computePBF(
     return true;
 }
 
-//// END OF THE IMPLEMENTATION OF THE (RAY-SPLATTING) FORWARD FUNCTION
+// For runtime ablation: PBF vs. UT vs. EWA
+
+__device__ void sample_ut(const glm::vec3 scale, const float mod, const glm::mat3 R_view, const float3 p_view, float2& p_ut, float3& cov_ut){
+	float ut_sqrt = sqrtf(ut_lambda + 3.f);
+	float2 x_[7];
+	glm::vec3 p_view_vec(p_view.x, p_view.y, p_view.z);
+	x_[0] = atan(divide_z(p_view_vec));
+	x_[1] = atan(divide_z(p_view_vec + (ut_sqrt * R_view[0] * scale.x * mod)));
+	x_[2] = atan(divide_z(p_view_vec + (ut_sqrt * R_view[1] * scale.y * mod)));
+	x_[3] = atan(divide_z(p_view_vec + (ut_sqrt * R_view[2] * scale.z * mod)));
+	x_[4] = atan(divide_z(p_view_vec - (ut_sqrt * R_view[0] * scale.x * mod)));
+	x_[5] = atan(divide_z(p_view_vec - (ut_sqrt * R_view[1] * scale.y * mod)));
+	x_[6] = atan(divide_z(p_view_vec - (ut_sqrt * R_view[2] * scale.z * mod)));
+
+	float l1 = ut_lambda / (ut_lambda + 3.0f);
+	float l2 = 0.5f / (ut_lambda + 3.0f);
+
+	p_ut.x = (l1) * x_[0].x + (l2) * (x_[1].x + x_[2].x + x_[3].x + x_[4].x + x_[5].x + x_[6].x);
+	p_ut.y = (l1) * x_[0].y + (l2) * (x_[1].y + x_[2].y + x_[3].y + x_[4].y + x_[5].y + x_[6].y);
+
+	cov_ut.x = (l1 + 1.f - sq(ut_alpha) + ut_beta) * sq(x_[0].x - p_ut.x) + (l2) * (sq(x_[1].x - p_ut.x) + sq(x_[2].x - p_ut.x) + sq(x_[3].x - p_ut.x) + sq(x_[4].x - p_ut.x) + sq(x_[5].x - p_ut.x) + sq(x_[6].x - p_ut.x));
+
+	cov_ut.y = (l1 + 1.f - sq(ut_alpha) + ut_beta) * (x_[0].x - p_ut.x) * (x_[0].y - p_ut.y) + (l2) * ((x_[1].x - p_ut.x) * (x_[1].y - p_ut.y) + (x_[2].x - p_ut.x) * (x_[2].y - p_ut.y) + (x_[3].x - p_ut.x) * (x_[3].y - p_ut.y) + (x_[4].x - p_ut.x) * (x_[4].y - p_ut.y) + (x_[5].x - p_ut.x) * (x_[5].y - p_ut.y) + (x_[6].x - p_ut.x) * (x_[6].y - p_ut.y));
+
+	cov_ut.z = (l1 + 1.f - sq(ut_alpha) + ut_beta) * sq(x_[0].y - p_ut.y) + (l2) * (sq(x_[1].y - p_ut.y) + sq(x_[2].y - p_ut.y) + sq(x_[3].y - p_ut.y) + sq(x_[4].y - p_ut.y) + sq(x_[5].y - p_ut.y) + sq(x_[6].y - p_ut.y));
+}
+
+
+__device__ float2 computeEllipseIntersection(
+	const float3 con_o, const float disc, const float t, const float2 p,
+	const bool isY, const float coord)
+{
+	float p_u = isY ? p.y : p.x;
+	float p_v = isY ? p.x : p.y;
+	float coeff = isY ? con_o.x : con_o.z;
+
+	float h = coord - p_u;  // h = y - p.y for y, x - p.x for x
+	float sqrt_term = sqrt(disc * h * h + t * coeff);
+
+	return {
+	  (-con_o.y * h - sqrt_term) / coeff + p_v,
+	  (-con_o.y * h + sqrt_term) / coeff + p_v
+	};
+}
+
+__device__ bool computeAABB_UT(
+    const glm::vec3 scale, const float mod, const glm::mat3 R_view, const float3 p_view, const float lambda, float4& aabb, const float tan_fovx, const float tan_fovy, float h_var, bool tighten)
+{
+	float3 cov;
+	float2 p;
+	sample_ut(scale, mod, R_view, p_view, p, cov); // https://arxiv.org/abs/2412.12507
+	const float det = cov.x * cov.z - cov.y * cov.y;
+	if (det == 0.0f)
+		return false;
+	float det_inv = 1.f / det;
+
+	float center_angle[2];
+	center_angle[0] = p.x;
+    center_angle[1]= p.y;
+
+	float half_extend_angle[2];
+	if (tighten)
+	{
+		// tighten the AABB https://arxiv.org/pdf/2412.00578
+		float3 conic = { cov.z * det_inv, -cov.y * det_inv, cov.x * det_inv };
+		float denom = sq(conic.y) - conic.x * conic.z;
+		if (conic.x <= 0 || conic.z <= 0 || denom >= 0) {
+			return false;
+		}
+
+		float x_term = lambda * sqrt(-sq(conic.y) / (denom * conic.x));
+		x_term = (conic.y < 0) ? x_term : -x_term;
+		float y_term = lambda * sqrt(-sq(conic.y) / (denom * conic.z));
+		y_term = (conic.y < 0) ? y_term : -y_term;
+		float2 bbox_argmin = { p.y - y_term, p.x - x_term };
+		float2 bbox_argmax = { p.y + y_term, p.x + x_term };
+		float2 bbox_min = {
+			computeEllipseIntersection(conic, denom, sq(lambda), p, true, bbox_argmin.x).x,
+			computeEllipseIntersection(conic, denom, sq(lambda), p, false, bbox_argmin.y).x
+		};
+		float2 bbox_max = {
+		computeEllipseIntersection(conic, denom, sq(lambda), p, true, bbox_argmax.x).y,
+		computeEllipseIntersection(conic, denom, sq(lambda), p, false, bbox_argmax.y).y
+		};
+		half_extend_angle[0] = (bbox_max.x - bbox_min.x) / 2.f;
+		half_extend_angle[1] = (bbox_max.y - bbox_min.y) / 2.f;
+	}
+	else
+	{
+		// loosen the AABB
+		float mid = 0.5f * (cov.x + cov.z);
+		float lambda1 = mid + sqrt(max(0.0f, mid * mid - det));
+		float lambda2 = mid - sqrt(max(0.0f, mid * mid - det));
+		// float my_radius = ceil(3.f * sqrt(max(lambda1, lambda2)));
+		float my_radius = (lambda * sqrt(max(lambda1, lambda2)));
+		half_extend_angle[0] = my_radius; // my_radius / focal_x;
+		half_extend_angle[1] = my_radius; // my_radius / focal_y;
+	}
+
+	float center[2];
+	float half_extend[2];
+	center[0] = (tan(center_angle[0] + half_extend_angle[0]) + tan(center_angle[0] - half_extend_angle[0])) / 2.f;
+	center[1] = (tan(center_angle[1] + half_extend_angle[1]) + tan(center_angle[1] - half_extend_angle[1])) / 2.f;
+	half_extend[0] = (tan(center_angle[0] + half_extend_angle[0]) - tan(center_angle[0] - half_extend_angle[0])) / 2.f;
+	half_extend[1] = (tan(center_angle[1] + half_extend_angle[1]) - tan(center_angle[1] - half_extend_angle[1])) / 2.f;
+
+	float neg = false;
+
+	if (isnan(half_extend[0]))
+	{ 
+		half_extend[0] = fmaxf(fabsf(center[0] - tan_fovx), fabsf(center[0] + tan_fovx));
+		neg = true; 
+	}
+	if (isnan(half_extend[1]))
+	{ 
+		half_extend[1] = fmaxf(fabsf(center[1] - tan_fovy), fabsf(center[1] + tan_fovy));
+		neg = true;
+	}
+	float _left = center[0] - half_extend[0];
+	float _right = center[0] + half_extend[0];
+	float _bottom = center[1] - half_extend[1];
+	float _upper = center[1] + half_extend[1];
+
+    aabb.x = _left;
+    aabb.y = _right;
+	aabb.z = _bottom;
+    aabb.w = _upper;
+
+	// If half-extend is negative, return and do not compute the omni
+	if (neg) return false;
+
+	// Omni mapping for AABB
+	float xi = 1.0;
+    float aabb_omni[8];
+	mirror_transform_pbf(aabb, xi, aabb_omni);
+
+    const float eps = 1e-6f;
+    float depth = p_view.z;
+    depth = (fabsf(depth) < eps) ? eps : depth; // Prevent division by zero
+    float gaus_center_omni[2] = {
+        mirror_transform_tan(p_view.x / depth, depth, xi),
+        mirror_transform_tan(p_view.y / depth, depth, xi)
+    };
+
+    float fov_omni[4];
+    mirror_transform_fov(tan_fovx, tan_fovy, xi, fov_omni);
+
+    float aa_omni[4] = { aabb_omni[0], aabb_omni[1], aabb_omni[2], aabb_omni[3] };
+	float bb_omni[4] = { aabb_omni[4], aabb_omni[5], aabb_omni[6], aabb_omni[7] };
+	float a_min = -INFINITY;
+	float a_max = INFINITY;
+	float b_min = -INFINITY;
+	float b_max = INFINITY;
+
+    int a_min_idx = -1;
+	int a_max_idx = -1;
+	int b_min_idx = -1;
+	int b_max_idx = -1;
+
+	for (int i = 0; i < 4; i++) {
+        if (aa_omni[i] < gaus_center_omni[0] && aa_omni[i] >= a_min){
+            a_min = aa_omni[i];
+            a_min_idx = i;
+        }
+        if (aa_omni[i] > gaus_center_omni[0] && aa_omni[i] <= a_max){ 
+            a_max = aa_omni[i];
+            a_max_idx = i;
+        }
+		if (bb_omni[i] < gaus_center_omni[1] && bb_omni[i] >= b_min){
+            b_min = bb_omni[i];
+            b_min_idx = i;
+        }
+        if (bb_omni[i] > gaus_center_omni[1] && bb_omni[i] <= b_max){
+            b_max = bb_omni[i];
+            b_max_idx = i;
+        }
+    }
+    if (a_min < fov_omni[1]) a_min_idx = 4;
+    if (a_min > fov_omni[0]) a_min_idx = 5;
+
+    if (a_max < fov_omni[1]) a_max_idx = 4;
+    if (a_max > fov_omni[0]) a_max_idx = 5;
+
+    if (b_min < fov_omni[3]) b_min_idx = 4;
+    if (b_min > fov_omni[2]) b_min_idx = 5;
+
+    if (b_max < fov_omni[3]) b_max_idx = 4;
+    if (b_max > fov_omni[2]) b_max_idx = 5;
+
+    if (a_min_idx == 4) aabb.x = -tan_fovx;
+    else if (a_min_idx == 5) aabb.x = tan_fovx;
+    else if (a_min_idx == 0) aabb.x = _left;
+    else if (a_min_idx == 1) aabb.x = _left;
+    else if (a_min_idx == 2) aabb.x = _right;
+    else if (a_min_idx == 3) aabb.x = _right;
+    
+    if (a_max_idx == 5) aabb.y = tan_fovx;
+    else if (a_max_idx == 4) aabb.y = -tan_fovx;
+    else if (a_max_idx == 0) aabb.y = _left;
+    else if (a_max_idx == 1) aabb.y = _left;
+    else if (a_max_idx == 2) aabb.y = _right;
+    else if (a_max_idx == 3) aabb.y = _right;
+
+    if (b_min_idx == 4) aabb.z = -tan_fovy;
+    else if (b_min_idx == 5) aabb.z = tan_fovy;
+    else if (b_min_idx == 0) aabb.z = _bottom;
+    else if (b_min_idx == 1) aabb.z = _bottom;
+    else if (b_min_idx == 2) aabb.z = _upper;
+    else if (b_min_idx == 3) aabb.z = _upper;
+
+    if (b_max_idx == 5) aabb.w = tan_fovy;
+    else if (b_max_idx == 4) aabb.w = -tan_fovy;
+    else if (b_max_idx == 0) aabb.w = _bottom;
+    else if (b_max_idx == 1) aabb.w = _bottom;
+    else if (b_max_idx == 2) aabb.w = _upper;
+    else if (b_max_idx == 3) aabb.w = _upper;
+
+    return true;
+}
+
+__device__ bool computeAABB_EWA(
+    const glm::vec3 scale, const float mod, const glm::mat3 R_view, const float3 p_view, const float lambda, float4& aabb, const float tan_fovx, const float tan_fovy, float h_var, bool tighten)
+{
+    float lambda_sq = sq(lambda);
+	float cov3d[6];
+	if (!computeCov3D(scale, mod, R_view, cov3d, h_var))
+		return false;
+
+	float3 t = p_view;
+	const float txtz = t.x / t.z;
+	const float tytz = t.y / t.z;
+	// glm::mat3 J = glm::mat3(
+	// 	focal_x / t.z, 0.0f, -focal_x * t.x / (t.z * t.z),
+	// 		0.0f, focal_y / t.z, -focal_y * t.y / (t.z * t.z),
+	// 		0, 0, 0);
+	glm::mat3 J = glm::mat3(
+		1.f / t.z, 0.0f, -t.x / (t.z * t.z),
+			0.0f, 1.f / t.z, -t.y / (t.z * t.z),
+			0, 0, 0);
+	glm::mat3 Vrk = glm::mat3(
+		cov3d[0], cov3d[1], cov3d[2],
+		cov3d[1], cov3d[3], cov3d[4],
+		cov3d[2], cov3d[4], cov3d[5]);
+
+	glm::mat3 cov2d = glm::transpose(J) * glm::transpose(Vrk) * J;
+	float3 cov = { float(cov2d[0][0]), float(cov2d[0][1]), float(cov2d[1][1]) };
+	const float det = cov.x * cov.z - cov.y * cov.y;
+	if (det == 0.0f)
+		return false;
+	float det_inv = 1.f / det;
+
+	// float3 cov_ut;
+	// float2 p_ut;
+	// sample_ut(scale, mod, R_view, p_view, p_ut, cov_ut);
+	// printf("cov2d: %f %f %f\n cov_ut: %f %f %f\n p2d: %f %f\n p_ut: %f %f\n", cov.x, cov.y, cov.z, cov_ut.x, cov_ut.y, cov_ut.z, txtz, tytz, p_ut.x, p_ut.y);
+
+	// float mid = 0.5f * (cov.x + cov.z);
+	// float lambda1 = mid + sqrt(max(0.0f, mid * mid - det));
+	// float lambda2 = mid - sqrt(max(0.0f, mid * mid - det));
+	// // float my_radius = ceil(3.f * sqrt(max(lambda1, lambda2)));
+	// float my_radius = (lambda * sqrt(max(lambda1, lambda2)));
+
+	float center[2];
+	center[0] = txtz;
+    center[1] = tytz;
+
+	float half_extend[2];
+	if (tighten)
+	{
+		// tighten the AABB https://arxiv.org/pdf/2412.00578
+		float3 conic = { cov.z * det_inv, -cov.y * det_inv, cov.x * det_inv };
+		float denom = sq(conic.y) - conic.x * conic.z;
+		float2 p = { center[0], center[1] };
+		if (conic.x <= 0 || conic.z <= 0 || denom >= 0) {
+			return false;
+		}
+
+		float x_term = lambda * sqrt(-sq(conic.y) / (denom * conic.x));
+		x_term = (conic.y < 0) ? x_term : -x_term;
+		float y_term = lambda * sqrt(-sq(conic.y) / (denom * conic.z));
+		y_term = (conic.y < 0) ? y_term : -y_term;
+		float2 bbox_argmin = { p.y - y_term, p.x - x_term };
+		float2 bbox_argmax = { p.y + y_term, p.x + x_term };
+		float2 bbox_min = {
+			computeEllipseIntersection(conic, denom, sq(lambda), p, true, bbox_argmin.x).x,
+			computeEllipseIntersection(conic, denom, sq(lambda), p, false, bbox_argmin.y).x
+		};
+		float2 bbox_max = {
+		computeEllipseIntersection(conic, denom, sq(lambda), p, true, bbox_argmax.x).y,
+		computeEllipseIntersection(conic, denom, sq(lambda), p, false, bbox_argmax.y).y
+		};
+		half_extend[0] = (bbox_max.x - bbox_min.x) / 2.f;
+		half_extend[1] = (bbox_max.y - bbox_min.y) / 2.f;
+	}
+	else
+	{
+		// loosen the AABB
+		float mid = 0.5f * (cov.x + cov.z);
+		float lambda1 = mid + sqrt(max(0.0f, mid * mid - det));
+		float lambda2 = mid - sqrt(max(0.0f, mid * mid - det));
+		// float my_radius = ceil(3.f * sqrt(max(lambda1, lambda2)));
+		float my_radius = (lambda * sqrt(max(lambda1, lambda2)));
+		half_extend[0] = my_radius; // my_radius / focal_x;
+		half_extend[1] = my_radius; // my_radius / focal_y;
+	}
+
+	float neg = false;
+
+	if (isnan(half_extend[0]))
+	{ 
+		half_extend[0] = fmaxf(fabsf(center[0] - tan_fovx), fabsf(center[0] + tan_fovx));
+		neg = true; 
+	}
+	if (isnan(half_extend[1]))
+	{ 
+		half_extend[1] = fmaxf(fabsf(center[1] - tan_fovy), fabsf(center[1] + tan_fovy));
+		neg = true;
+	}
+	float _left = center[0] - half_extend[0];
+	float _right = center[0] + half_extend[0];
+	float _bottom = center[1] - half_extend[1];
+	float _upper = center[1] + half_extend[1];
+
+    aabb.x = _left;
+    aabb.y = _right;
+	aabb.z = _bottom;
+    aabb.w = _upper;
+
+	// If half-extend is negative, return and do not compute the omni
+	if (neg) return;
+
+	// Omni mapping for AABB
+	float xi = 1.0;
+    float aabb_omni[8];
+	mirror_transform_pbf(aabb, xi, aabb_omni);
+
+    const float eps = 1e-6f;
+    float depth = p_view.z;
+    depth = (fabsf(depth) < eps) ? eps : depth; // Prevent division by zero
+    float gaus_center_omni[2] = {
+        mirror_transform_tan(p_view.x / depth, depth, xi),
+        mirror_transform_tan(p_view.y / depth, depth, xi)
+    };
+
+    float fov_omni[4];
+    mirror_transform_fov(tan_fovx, tan_fovy, xi, fov_omni);
+
+    float aa_omni[4] = { aabb_omni[0], aabb_omni[1], aabb_omni[2], aabb_omni[3] };
+	float bb_omni[4] = { aabb_omni[4], aabb_omni[5], aabb_omni[6], aabb_omni[7] };
+	float a_min = -INFINITY;
+	float a_max = INFINITY;
+	float b_min = -INFINITY;
+	float b_max = INFINITY;
+
+    int a_min_idx = -1;
+	int a_max_idx = -1;
+	int b_min_idx = -1;
+	int b_max_idx = -1;
+
+	for (int i = 0; i < 4; i++) {
+        if (aa_omni[i] < gaus_center_omni[0] && aa_omni[i] >= a_min){
+            a_min = aa_omni[i];
+            a_min_idx = i;
+        }
+        if (aa_omni[i] > gaus_center_omni[0] && aa_omni[i] <= a_max){ 
+            a_max = aa_omni[i];
+            a_max_idx = i;
+        }
+		if (bb_omni[i] < gaus_center_omni[1] && bb_omni[i] >= b_min){
+            b_min = bb_omni[i];
+            b_min_idx = i;
+        }
+        if (bb_omni[i] > gaus_center_omni[1] && bb_omni[i] <= b_max){
+            b_max = bb_omni[i];
+            b_max_idx = i;
+        }
+    }
+    if (a_min < fov_omni[1]) a_min_idx = 4;
+    if (a_min > fov_omni[0]) a_min_idx = 5;
+
+    if (a_max < fov_omni[1]) a_max_idx = 4;
+    if (a_max > fov_omni[0]) a_max_idx = 5;
+
+    if (b_min < fov_omni[3]) b_min_idx = 4;
+    if (b_min > fov_omni[2]) b_min_idx = 5;
+
+    if (b_max < fov_omni[3]) b_max_idx = 4;
+    if (b_max > fov_omni[2]) b_max_idx = 5;
+
+    if (a_min_idx == 4) aabb.x = -tan_fovx;
+    else if (a_min_idx == 5) aabb.x = tan_fovx;
+    else if (a_min_idx == 0) aabb.x = _left;
+    else if (a_min_idx == 1) aabb.x = _left;
+    else if (a_min_idx == 2) aabb.x = _right;
+    else if (a_min_idx == 3) aabb.x = _right;
+    
+    if (a_max_idx == 5) aabb.y = tan_fovx;
+    else if (a_max_idx == 4) aabb.y = -tan_fovx;
+    else if (a_max_idx == 0) aabb.y = _left;
+    else if (a_max_idx == 1) aabb.y = _left;
+    else if (a_max_idx == 2) aabb.y = _right;
+    else if (a_max_idx == 3) aabb.y = _right;
+
+    if (b_min_idx == 4) aabb.z = -tan_fovy;
+    else if (b_min_idx == 5) aabb.z = tan_fovy;
+    else if (b_min_idx == 0) aabb.z = _bottom;
+    else if (b_min_idx == 1) aabb.z = _bottom;
+    else if (b_min_idx == 2) aabb.z = _upper;
+    else if (b_min_idx == 3) aabb.z = _upper;
+
+    if (b_max_idx == 5) aabb.w = tan_fovy;
+    else if (b_max_idx == 4) aabb.w = -tan_fovy;
+    else if (b_max_idx == 0) aabb.w = _bottom;
+    else if (b_max_idx == 1) aabb.w = _bottom;
+    else if (b_max_idx == 2) aabb.w = _upper;
+    else if (b_max_idx == 3) aabb.w = _upper;
+
+    return true;
+}
 
 // Forward method for converting the input spherical harmonics
 // coefficients of each Gaussian to a simple RGB color.
@@ -475,7 +893,13 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	// Compute exact and tight Particle Bounding Frustum (PBF);
 	// see details in 3DGEER paper: https://openreview.net/pdf?id=4voMNlRWI7, Eq.10 (mathmatical proof in Sec.D.1)
 	float4 tan_xxyy; // clamped tan value in x / y dir, i.e., tan_theta, tan_phi
+	// if asso use PBF
 	if (!computePBF(scales[idx], scale_modifier, R_view, p_view, cutoff, tan_xxyy, tan_fovx, tan_fovy, h_opacity[idx].x)) return;
+	// else if
+	// bool tighten = true;
+	// if (!computeAABB_EWA(scales[idx], scale_modifier, R_view, p_view, cutoff, tan_xxyy, tan_fovx, tan_fovy, h_opacity[idx].x, tighten)) return;
+	// if (!computeAABB_UT(scales[idx], scale_modifier, R_view, p_view, cutoff, tan_xxyy, tan_fovx, tan_fovy, h_opacity[idx].x, tighten)) return;
+
 	if ((tan_xxyy.y - tan_xxyy.x) * (tan_xxyy.w - tan_xxyy.z) == 0)
 		return;
 
