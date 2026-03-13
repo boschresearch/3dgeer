@@ -43,8 +43,10 @@ CUDA_VISIBLE_DEVICES=0 python simple_viewer.py --with_geer --with_eval3d --ckpt 
 ```
 
 ## ✨Opensource Community 
-### `drivestudio-geer` TBD
-### `stormGaussian-geer` TBD
+### `drivestudio-geer` 
+> TBD
+### `stormGaussian-geer` 
+> TBD
 ### How to use in your project
 > TBD (see [./app](app/) for details).
 
