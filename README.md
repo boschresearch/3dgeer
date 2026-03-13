@@ -42,6 +42,12 @@ pip install -r examples/requirements.txt
 CUDA_VISIBLE_DEVICES=0 python simple_viewer.py --with_geer --with_eval3d --ckpt results/benchmark_mcmc_1M_3dgut/garden/ckpt_29999_rank0.pt 
 ```
 
+## ✨Opensource Community 
+### `drivestudio-geer` TBD
+### `stormGaussian-geer` TBD
+### How to use in your project
+> TBD (see [./app](app/) for details).
+
 ## 🙏Special `gsplat-geer` Extension OSS Acknowledgments
 <p align="left">
   <strong>Core Contributors:</strong><br>
