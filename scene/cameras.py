@@ -183,6 +183,14 @@ class MiniCam:
         view_inv = torch.inverse(self.world_view_transform)
         self.camera_center = view_inv[3][:3]
         self.sample_step = sample_step
+        # Attributes required by the render function; sibr viewer uses BEAP mode.
+        self.render_model = 0
+        self.focal_x = None
+        self.focal_y = None
+        self.principal_x = None
+        self.principal_y = None
+        self.distortion_coeffs = None
+        self.raymap = None
         arr_theta, arr_phi = self.fov_sample2ray(self.FoVx/2, self.FoVy/2, sample_step)
         
         cos_theta = torch.cos(arr_theta)
