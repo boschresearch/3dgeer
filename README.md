@@ -73,6 +73,7 @@ This repository contains the official authors implementation associated with the
 
 ## 🎉News
 - **TBD**: `drivestudio-geer` and `stormGaussian-geer` will be released [here](#special-extension) as well!
+- **2026-03-17**: `SIBR_remoteGaussian_app` is adapted to our work as an interactive viewer for training and trained checkpoints. Try the `BEAP` mode in the viewer; `Pinhole` and `Fisheye` modes are supported as well.
 - **2026-03-09**: `gsplat-geer` released [here](#special-extension)!
 - **2026-03-09**: Code released! Can Gaussian rendering be both exact and fast without relying on lossy splatting? **Check out 3DGEER**!
 - **2026-03-09**: Code release approved. License updated. Requested admin to push code to BoschResearch.
