@@ -57,6 +57,7 @@ This repository contains the official authors implementation associated with the
 <section class="section" id="BibTeX">
   <div class="container is-max-desktop content">
     <h2 class="title">📰BibTeX</h2>
+    <p>If you find our work useful, we’d really appreciate a ⭐ or citation.</p>
     <pre><code>@misc{huang20263dgeer3dgaussianrendering,
       title={3DGEER: 3D Gaussian Rendering Made Exact and Efficient for Generic Cameras}, 
       author={Zixun Huang and Cho-Ying Wu and Yuliang Guo and Xinyu Huang and Liu Ren},
