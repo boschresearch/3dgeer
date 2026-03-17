@@ -17,7 +17,7 @@ DATA_ROOT="data/scnt/datasets/"
 
 # Must match the values used during training
 STEP=0.002
-FOVMOD_TRAIN=1.3
+FOVMOD_TRAIN=1
 
 # Iteration to load (-1 = latest checkpoint)
 ITER=30000
@@ -29,7 +29,7 @@ PORT=6009
 echo "Visualizing scene: $SCENE_ID"
 
 DATASET_DIR="${DATA_ROOT}${SCENE_ID}/"
-OUTPUT_DIR="./output/scnt/${SCENE_ID}"
+OUTPUT_DIR="output/scnt/${SCENE_ID}"
 
 BEAP_DIR_TRAIN="beap_fov_${FOVMOD_TRAIN}_step_${STEP}/"
 TRAIN_MASK_FN="fov_${FOVMOD_TRAIN}_step_${STEP}_mask.png"
