@@ -97,6 +97,7 @@ The full CUDA implementation can be found here: [./submodules/geer-rasterizer/](
     <img src="assets/asso.gif" width="60%">
   </div>
 
+## 🔧Dependency and Viewer Setup
 #### Conda Based Installation
 Following the 3dgs dependencies https://github.com/graphdeco-inria/gaussian-splatting to install the 3dgs environment, and then run the following command to replace the `diff-gaussian-rasterization` for using a geer-version CUDA rasterizer:
 ```sh
