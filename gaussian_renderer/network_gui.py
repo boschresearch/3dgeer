@@ -61,6 +61,13 @@ def receive(extra_params):
     width = message["resolution_x"]
     height = message["resolution_y"]
     step = extra_params["sample_step"]
+    render_model_int = extra_params.get("render_model_int", 0)
+    focal_x = extra_params.get("focal_x")
+    focal_y = extra_params.get("focal_y")
+    principal_x = extra_params.get("principal_x")
+    principal_y = extra_params.get("principal_y")
+    distortion_coeffs = extra_params.get("distortion_coeffs")
+    raymap = extra_params.get("raymap")
 
     if width != 0 and height != 0:
         try:
@@ -78,7 +85,10 @@ def receive(extra_params):
             world_view_transform[:,2] = -world_view_transform[:,2]
             full_proj_transform = torch.reshape(torch.tensor(message["view_projection_matrix"]), (4, 4)).cuda()
             full_proj_transform[:,1] = -full_proj_transform[:,1]
-            custom_cam = MiniCam(width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform, step)
+            custom_cam = MiniCam(width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform, step,
+                                 render_model=render_model_int, focal_x=focal_x, focal_y=focal_y,
+                                 principal_x=principal_x, principal_y=principal_y,
+                                 distortion_coeffs=distortion_coeffs, raymap=raymap)
         except Exception as e:
             print("")
             traceback.print_exc()
