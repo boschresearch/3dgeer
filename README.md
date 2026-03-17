@@ -133,8 +133,8 @@ $sibr_rg
 ```
 - To use `SIBR_remoteGaussian_app` from **checkpoints**, first run the following on Terminal 1.
 ```sh
-bash scripts/visualize.sh <SCENE_ID> <DATA_ROOT> <CKPT_DIR> <MODE>
-# Then launch:
+bash scripts/visualize.sh <SCENE_ID> <DATA_ROOT> <CKPT_DIR> <MODE: BEAP, PH or KB> # Example: 1d003b07bd/dslr data/scnt/datasets ckpt/scnt KB
+# Then (on Terminal 2) launch:
 $sibr_rg
 ```
 - **For offline visualization**, We recommend using our [`gsplat-geer`](https://github.com/boschresearch/3dgeer/tree/gsplat-geer) implementation, built on top of: https://github.com/nerfstudio-project/gsplat/blob/main/docs/3dgut.md 
