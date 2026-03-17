@@ -93,10 +93,18 @@ The full CUDA implementation can be found here: [./submodules/geer-rasterizer/](
 
 #### Key Insight 2: Fixing the Math Behind Gaussian Association
 
-- Particle Bounding Frustum: Efficient AABB for ray–particle association. (See [paper](https://arxiv.org/pdf/2505.24053) Appendix D for the math.)
+- Particle Bounding Frustum: Exact and minimal boundary geometry for ray–particle association. (See [paper](https://arxiv.org/pdf/2505.24053) Appendix D for the math.)
 
   <div align="center">
     <img src="assets/asso.gif" width="60%">
+  </div>
+
+#### Key Insight 3: Optimizing the Ray Distribution Behind Pixelwise Color Supervision
+
+- Bipolar Equiangular Projection: Maintains uniform ray sampling across arbitrary fields of view, thereby providing stable, FoV-invariant supervision for radiance field training.
+
+  <div align="center">
+    <img src="assets/beap.gif" width="60%">
   </div>
 
 ## 🔧Dependency and Viewer Setup
