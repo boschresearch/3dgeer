@@ -129,7 +129,16 @@ bash ./docker/run_my_docker.sh
 # Inside docker container, run:
 $sibr_rg
 ```
-- **For offline visualization**, We recommend using our [`gsplat-geer`](https://github.com/boschresearch/3dgeer/tree/gsplat-geer) implementation, built on top of: https://github.com/nerfstudio-project/gsplat/blob/main/docs/3dgut.md (In addition, the mismatched culling issue in UT is resolved using our PBF-based fix.)
+- To use `SIBR_remoteGaussian_app` from **checkpoints**, first run the following on Terminal 1.
+```
+bash scripts/visualize.sh
+```
+Then launch:
+```
+$sibr_rg
+```
+- **For offline visualization**, We recommend using our [`gsplat-geer`](https://github.com/boschresearch/3dgeer/tree/gsplat-geer) implementation, built on top of: https://github.com/nerfstudio-project/gsplat/blob/main/docs/3dgut.md 
+> Note: the mismatched culling issue in UT is resolved using our PBF-based fix.
 
 ## 🏃Quick Start
 ### 1. Data Preparation
