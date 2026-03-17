@@ -171,6 +171,11 @@ class Camera(nn.Module):
             # Pinhole camera: standard perspective projection using focal lengths and
             # principal point.  No distortion correction or per-pixel raymap required;
             # the CUDA else-branch computes ray directions directly from focal lengths.
+            if focal_x is None or focal_y is None or principal_x is None or principal_y is None:
+                raise ValueError(
+                    "PH render mode requires focal_x, focal_y, principal_x, and "
+                    "principal_y to be set (got None for one or more of these values)"
+                )
             self.focal_x = focal_x.item() * focal_scaling
             self.focal_y = focal_y.item() * focal_scaling
             self.principal_x = principal_x.item()
@@ -204,7 +209,9 @@ class Camera(nn.Module):
         return m / (1+xi*(z/(torch.abs(z)))*(1+m**2)**0.5)
 
 class MiniCam:
-    def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform, sample_step):
+    def __init__(self, width, height, fovy, fovx, znear, zfar, world_view_transform, full_proj_transform, sample_step,
+                 render_model=0, focal_x=None, focal_y=None, principal_x=None, principal_y=None,
+                 distortion_coeffs=None, raymap=None):
         self.FoVy = fovy
         self.FoVx = fovx
         self.znear = znear
@@ -214,28 +221,50 @@ class MiniCam:
         view_inv = torch.inverse(self.world_view_transform)
         self.camera_center = view_inv[3][:3]
         self.sample_step = sample_step
-        # Attributes required by the render function; sibr viewer uses BEAP mode.
-        self.render_model = 0
-        self.focal_x = None
-        self.focal_y = None
-        self.principal_x = None
-        self.principal_y = None
-        self.distortion_coeffs = None
-        self.raymap = None
+        self.render_model = render_model
+
         arr_theta, arr_phi = self.fov_sample2ray(self.FoVx/2, self.FoVy/2, sample_step)
-        
+
         cos_theta = torch.cos(arr_theta)
         cos_phi = torch.cos(arr_phi)
-        
-        cos_theta = torch.where(torch.abs(cos_theta) < 1e-7, torch.full_like(cos_theta, 1e-7), cos_theta)#.to(self.data_device)
-        cos_phi = torch.where(torch.abs(cos_phi) < 1e-7, torch.full_like(cos_phi, 1e-7), cos_phi)#.to(self.data_device)
-        self.tan_theta = torch.tan(arr_theta)#.to(self.data_device)
-        self.tan_phi = torch.tan(arr_phi)#.to(self.data_device)
+
+        cos_theta = torch.where(torch.abs(cos_theta) < 1e-7, torch.full_like(cos_theta, 1e-7), cos_theta)
+        cos_phi = torch.where(torch.abs(cos_phi) < 1e-7, torch.full_like(cos_phi, 1e-7), cos_phi)
+        self.tan_theta = torch.tan(arr_theta)
+        self.tan_phi = torch.tan(arr_phi)
         self.mirror_transformed_tan_theta = self.mirror_transform(self.tan_theta, cos_theta)
         self.mirror_transformed_tan_phi = self.mirror_transform(self.tan_phi, cos_phi)
-        # Derive image dimensions from the ray-grid sizes, consistent with Camera BEAP mode.
-        self.image_width = self.tan_theta.shape[0]
-        self.image_height = self.tan_phi.shape[0]
+
+        if render_model == 0:  # BEAP
+            self.focal_x = None
+            self.focal_y = None
+            self.principal_x = None
+            self.principal_y = None
+            self.distortion_coeffs = None
+            self.raymap = None
+            # Derive image dimensions from the ray-grid sizes, consistent with Camera BEAP mode.
+            self.image_width = self.tan_theta.shape[0]
+            self.image_height = self.tan_phi.shape[0]
+        elif render_model == 1:  # KB / EQ
+            if raymap is None:
+                raise ValueError("KB/EQ render mode requires a raymap")
+            self.focal_x = focal_x
+            self.focal_y = focal_y
+            self.principal_x = principal_x
+            self.principal_y = principal_y
+            self.distortion_coeffs = distortion_coeffs
+            self.raymap = raymap
+            self.image_width = raymap.shape[1]
+            self.image_height = raymap.shape[0]
+        elif render_model == 2:  # PH
+            self.focal_x = focal_x
+            self.focal_y = focal_y
+            self.principal_x = principal_x
+            self.principal_y = principal_y
+            self.distortion_coeffs = None
+            self.raymap = None
+            self.image_width = width
+            self.image_height = height
 
     @staticmethod
     def fov_sample2ray(fovx, fovy, interval):

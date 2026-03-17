@@ -122,7 +122,7 @@ Please do not use:
 as it invokes the **vanilla 3D Gaussian Splatting rasterizer** for offline rendering from checkpoints. This leads to invalid results, since GEER-trained (ray-based) scenes are incompatible with splatting-based rendering.
 
 **✅ Recommended Alternatives:**
-- **During training**, Use `SIBR_remoteGaussian_app`, which connects via port and calls our modified GEER rasterizer.
+- **During training**, use `SIBR_remoteGaussian_app`, which connects via port and calls our modified GEER rasterizer.
 ```sh
 # Enter Workspace for SIBR Viewer on Terminal 2
 bash ./docker/run_my_docker.sh
@@ -131,7 +131,7 @@ $sibr_rg
 ```
 - To use `SIBR_remoteGaussian_app` from **checkpoints**, first run the following on Terminal 1.
 ```
-bash scripts/visualize.sh
+bash scripts/visualize.sh <SCENE_ID> <DATA_ROOT> <CKPT_DIR> <MODE>
 ```
 Then launch:
 ```
