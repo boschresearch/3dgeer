@@ -34,7 +34,7 @@ Bosch Center for AI, Bosch Research North America
             </blockquote>
             <p>
               The splatting approximation is usually harmless for narrow field-of-view (FoV) pinhole cameras.
-              However, once we move to fisheye, omnidirectional, or generic camera models — especially those common in robotics and autonomous driving — the approximation error becomes significant.
+              However, once we move to fisheye, omnidirectional, or generic camera models — especially those common in augmented reality, robotics and autonomous driving — the approximation error becomes significant.
             </p>
           </section>
     </div>
