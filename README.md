@@ -130,7 +130,7 @@ bash ./docker/run_my_docker.sh
 $sibr_rg
 ```
 - To use `SIBR_remoteGaussian_app` from **checkpoints**, first run the following on Terminal 1.
-```
+```sh
 bash scripts/visualize.sh <SCENE_ID> <DATA_ROOT> <CKPT_DIR> <MODE>
 # Then launch:
 $sibr_rg
