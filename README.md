@@ -130,11 +130,9 @@ bash ./docker/run_my_docker.sh
 $sibr_rg
 ```
 - To use `SIBR_remoteGaussian_app` from **checkpoints**, first run the following on Terminal 1.
-```
+```sh
 bash scripts/visualize.sh <SCENE_ID> <DATA_ROOT> <CKPT_DIR> <MODE>
-```
-Then launch:
-```
+# Then launch:
 $sibr_rg
 ```
 - **For offline visualization**, We recommend using our [`gsplat-geer`](https://github.com/boschresearch/3dgeer/tree/gsplat-geer) implementation, built on top of: https://github.com/nerfstudio-project/gsplat/blob/main/docs/3dgut.md 
