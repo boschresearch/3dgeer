@@ -219,7 +219,7 @@ https://huggingface.co/datasets/ZixunH/3DGEER_ckpt
 
 ## 🙏Special Extension
 <p align="center">
-  <a href='https://github.com/boschresearch/3dgeer/tree/gsplat-geer'><img src="assets/deliverypath.jpg" alt="teaser" style="width: 100%;"></a>
+  <a href='https://github.com/boschresearch/3dgeer/tree/gsplat-geer'><img src="assets/gsplat-geer.gif" alt="teaser" style="width: 100%;"></a>
   3DGEER supports the opensource community with <code>gsplat</code> integration. <br />Check out our <a href='https://github.com/boschresearch/3dgeer/tree/gsplat-geer'><code>gsplat-geer</code></a> branch for details.
 </p>
 
@@ -228,7 +228,7 @@ Feel free to drop a [pull request](https://github.com/boschresearch/3dgeer/pulls
 
 ## 👀Visuals ([More](https://zixunh.github.io/3d-geer))
 
-<div class="col-md-8 col-md-offset-2">
+<!-- <div class="col-md-8 col-md-offset-2">
     <h4>
       Out-of-Distribution (OOD) Extreme FoV Results
     </h4>
@@ -243,7 +243,7 @@ Feel free to drop a [pull request](https://github.com/boschresearch/3dgeer/pulls
     <p align="center">
       Side-by-Side Comparison on Close-Up Parking Data: 3DGEER's PBF association (Right Col.) has less popping issues (First Row) and no grid-line artifacts (Second Row) compared w/ UT (Left Col.).
     </p>
-</div>
+</div> -->
 
 <div class="col-md-8 col-md-offset-2">
     <h4>
