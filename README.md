@@ -74,7 +74,6 @@ This repository contains the official authors implementation associated with the
 ## 🎉News
 <p align="center">
   <img src="assets/drive-geer.gif" alt="teaser" style="width: 100%;">
-  DriveStudio-GEER rendering dynamic scene under distorted cameras with waymo open dataset.
 </p>
 
 - **TBD**: `drivestudio-geer` and `stormGaussian-geer` will be released [here](#special-extension) as well!
