@@ -48,7 +48,7 @@ This repository contains the official authors implementation associated with the
             <ul>
               <li>Projective <strong>exactness</strong> + Real-time <strong>efficiency</strong></li>
               <li>Compatibility with generic camera models (pinhole / fisheye) + Strong generalization to <strong>extreme FoV</strong></li>
-              <li>Adaptation to <strong>widely-used</strong> GS frameworks including <code>diff-gaussian-rasterization</code>, <code>gsplat</code>, <code>drivestudio</code></li>
+              <li>Adaptation to <strong>widely-used</strong> GS frameworks including <code>diff-gaussian-rasterization</code>, <code>gsplat</code>, <code>drivestudio</code></li>; now supports dynamic outdoor scene rendering under wide-FoV fisheye cameras.
             </ul>
         </section>
     </div>
@@ -72,7 +72,13 @@ This repository contains the official authors implementation associated with the
 
 
 ## 🎉News
+<p align="center">
+  <img src="assets/drive-geer.gif" alt="teaser" style="width: 100%;">
+  DriveStudio-GEER rendering dynamic scene under distorted cameras with waymo open dataset.
+</p>
+
 - **TBD**: `drivestudio-geer` and `stormGaussian-geer` will be released [here](#special-extension) as well!
+- **2026-03-19**: 3DGEER now supports **dynamic outdoor scene** rendering under **wide-FoV fisheye** cameras with the integration into DriveStudio.
 - **2026-03-17**: `SIBR_remoteGaussian_app` is adapted to our work as an interactive viewer for training and trained checkpoints. Try the `BEAP` mode in the viewer; `Pinhole` and `Fisheye` modes are supported as well.
 - **2026-03-09**: `gsplat-geer` released [here](#special-extension)!
 - **2026-03-09**: Code released! Can Gaussian rendering be both exact and fast without relying on lossy splatting? **Check out 3DGEER**!
