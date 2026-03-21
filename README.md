@@ -44,11 +44,11 @@ CUDA_VISIBLE_DEVICES=0 python simple_viewer.py --with_geer --with_eval3d --ckpt 
 
 ## ✨Opensource Community 
 ### `drivestudio-geer` 
-> TBD
+> Our version TBD. To use `gsplat-geer` in `drivestudio`, update `drivestudio` to be compatible with `gsplat==1.5.3` and then follow the steps [here](app/).
 ### `stormGaussian-geer` 
 > TBD
 ### How to use in your project
-> TBD (see [./app](app/) for details).
+> See [./app](app/) for details.
 
 ## 🙏Special `gsplat-geer` Extension OSS Acknowledgments
 <p align="left">

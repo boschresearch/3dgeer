@@ -53,14 +53,30 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> intersect_tile_geer(
     auto opt = means.options();
 
     at::Tensor default_radial_coeffs;
+
     if (radial_coeffs.has_value()) {
-        default_radial_coeffs = radial_coeffs.value();
+        auto coeffs = radial_coeffs.value();
+
+        int expected = (camera_model == CameraModelType::PINHOLE) ? 6 : 4;
+
+        TORCH_CHECK(
+            coeffs.numel() == expected,
+            "Expected ", expected, " radial coeffs but got ", coeffs.numel()
+        );
+
+        default_radial_coeffs = coeffs
+            .to(opt.device())
+            .to(at::kFloat)
+            .view({-1})              // force 1D
+            .contiguous();
+
     } else if (camera_model == CameraModelType::PINHOLE) {
         default_radial_coeffs = at::zeros({6}, opt.dtype(at::kFloat));
+
     } else if (camera_model == CameraModelType::FISHEYE) {
         default_radial_coeffs = at::zeros({4}, opt.dtype(at::kFloat));
     } else {
-        printf("Camera model not supported yet\n");
+        TORCH_CHECK(false, "Camera model not supported yet");
     }
 
     // CUDA FN 1
@@ -282,8 +298,8 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> intersect_tile_geer(
         return std::make_tuple(tiles_per_gauss, isect_ids, flatten_ids, beap_xxyy);
     }
     // return std::make_tuple(
-    //     tiles_per_gauss, at::Tensor(), at::Tensor(),
-    //     at::Tensor(), at::Tensor(), aabb_id.view({P, 4}), beap_xxyy.view({P, 4})
+    //     at::Tensor(), at::Tensor(), at::Tensor(),
+    //     at::Tensor()
     // );
 }
 

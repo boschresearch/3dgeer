@@ -12,7 +12,7 @@
 
 namespace gsplat {
 
-std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor> intersect_tile(
+std::tuple<at::Tensor, at::Tensor, at::Tensor> intersect_tile(
     const at::Tensor means2d,                    // [..., N, 2] or [nnz, 2]
     const at::Tensor radii,                      // [..., N, 2] or [nnz, 2]
     const at::Tensor depths,                     // [..., N] or [nnz]
@@ -150,9 +150,9 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor> intersect
                 ranges.contiguous().data_ptr<int64_t>()
             );
         }
-        return std::make_tuple(tiles_per_gauss, isect_ids_sorted, flatten_ids_sorted, ranges.view({n_tiles, 2}), isect_ids);
+        return std::make_tuple(tiles_per_gauss, isect_ids_sorted, flatten_ids_sorted);
     } else {
-        return std::make_tuple(tiles_per_gauss, isect_ids, flatten_ids, ranges.view({n_tiles, 2}), isect_ids);
+        return std::make_tuple(tiles_per_gauss, isect_ids, flatten_ids);
     }
 }
 

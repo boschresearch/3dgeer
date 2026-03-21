@@ -504,7 +504,7 @@ def isect_tiles(
         assert radii.shape == image_dims + (N, 2), radii.shape
         assert depths.shape == image_dims + (N,), depths.shape
 
-    tiles_per_gauss, isect_ids, flatten_ids, ranges, unsorted_isect_ids = _make_lazy_cuda_func("intersect_tile")(
+    tiles_per_gauss, isect_ids, flatten_ids = _make_lazy_cuda_func("intersect_tile")(
         means2d.contiguous(),
         radii.contiguous(),
         depths.contiguous(),
@@ -517,7 +517,7 @@ def isect_tiles(
         sort,
         segmented,
     )
-    return tiles_per_gauss, isect_ids, flatten_ids, ranges, unsorted_isect_ids
+    return tiles_per_gauss, isect_ids, flatten_ids
 
 @torch.no_grad()
 def isect_tiles_geer(
@@ -645,6 +645,7 @@ def isect_tiles_geer(
         f"CameraModelType.{camera_model.upper()}"
     )
 
+    # radial_coeffs = None
     tiles_per_gauss, isect_ids, flatten_ids, beap_xxyy = _make_lazy_cuda_func("intersect_tile_geer")(
         N,
         means.contiguous(),
@@ -655,7 +656,7 @@ def isect_tiles_geer(
         viewmats[0].contiguous(),
         camera_model_type,
         Ks.contiguous(),
-        radial_coeffs.contiguous() if radial_coeffs else radial_coeffs,
+        radial_coeffs.contiguous() if radial_coeffs is not None else radial_coeffs,
         near_plane,
         far_plane,
 

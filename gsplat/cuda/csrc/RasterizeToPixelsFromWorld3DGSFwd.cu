@@ -90,6 +90,8 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
     // shift pointers to the current camera. note that glm is colume-major.
     const vec2 focal_length = {Ks[iid * 9 + 0], Ks[iid * 9 + 4]};
     const vec2 principal_point = {Ks[iid * 9 + 2], Ks[iid * 9 + 5]};
+
+    const bool beap_ray_pruning = beap_xxyy != nullptr;
     
     // Create ray from pixel
     WorldRay ray;
@@ -103,7 +105,8 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
             cm_params.focal_length = { focal_length.x, focal_length.y };
             PerfectPinholeCameraModel camera_model(cm_params);
             ray = camera_model.image_point_to_world_ray_shutter_pose(vec2(px, py), rs_params);
-            camera_ray_dir = camera_model.image_point_to_camera_ray(vec2(px, py)).ray_dir;
+            if (beap_ray_pruning) 
+                camera_ray_dir = camera_model.image_point_to_camera_ray(vec2(px, py)).ray_dir;
         } else {
             OpenCVPinholeCameraModel<>::Parameters cm_params = {};
             cm_params.resolution = {image_width, image_height};
@@ -121,7 +124,8 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
             }
             OpenCVPinholeCameraModel camera_model(cm_params);
             ray = camera_model.image_point_to_world_ray_shutter_pose(vec2(px, py), rs_params);
-            camera_ray_dir = camera_model.image_point_to_camera_ray(vec2(px, py)).ray_dir;
+            if (beap_ray_pruning) 
+                camera_ray_dir = camera_model.image_point_to_camera_ray(vec2(px, py)).ray_dir;
         }
     } else if (camera_model_type == CameraModelType::FISHEYE) {
         OpenCVFisheyeCameraModel<>::Parameters cm_params = {};
@@ -131,10 +135,19 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
         cm_params.focal_length = { focal_length.x, focal_length.y };
         if (radial_coeffs != nullptr) {
             cm_params.radial_coeffs = make_array<float, 4>(radial_coeffs + iid * 4);
+            // printf("raw radial_coeffs ptr values: %f %f %f %f\n",
+            //     radial_coeffs[iid * 4 + 0],
+            //     radial_coeffs[iid * 4 + 1],
+            //     radial_coeffs[iid * 4 + 2],
+            //     radial_coeffs[iid * 4 + 3]
+            // );
+        } else {
+
         }
         OpenCVFisheyeCameraModel camera_model(cm_params);
         ray = camera_model.image_point_to_world_ray_shutter_pose(vec2(px, py), rs_params);
-        camera_ray_dir = camera_model.image_point_to_camera_ray(vec2(px, py)).ray_dir;
+        if (beap_ray_pruning) 
+            camera_ray_dir = camera_model.image_point_to_camera_ray(vec2(px, py)).ray_dir;
     } else if (camera_model_type == CameraModelType::FTHETA) {
         FThetaCameraModel<>::Parameters cm_params = {};
         cm_params.resolution = {image_width, image_height};
@@ -143,7 +156,8 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
         cm_params.dist = ftheta_coeffs;
         FThetaCameraModel camera_model(cm_params);
         ray = camera_model.image_point_to_world_ray_shutter_pose(vec2(px, py), rs_params);
-        camera_ray_dir = camera_model.image_point_to_camera_ray(vec2(px, py)).ray_dir;
+        if (beap_ray_pruning) 
+            camera_ray_dir = camera_model.image_point_to_camera_ray(vec2(px, py)).ray_dir;
     } else {
         // should never reach here
         assert(false);
@@ -186,8 +200,8 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
         reinterpret_cast<vec4 *>(&id_batch[block_size]); // [block_size]
     mat3 *iscl_rot_batch =
         reinterpret_cast<mat3 *>(&xyz_opacity_batch[block_size]); // [block_size]
-    vec4 *beap_xxyy_batch =
-        reinterpret_cast<vec4 *>(&iscl_rot_batch[block_size]);
+    vec4 *beap_xxyy_batch = beap_ray_pruning ? reinterpret_cast<vec4 *>(&iscl_rot_batch[block_size])
+                                             : nullptr;
     
     // current visibility left to render
     // transmittance is gonna be used in the backward pass which requires a high
@@ -242,7 +256,9 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
             );
             mat3 iscl_rot = S * glm::transpose(R);
             iscl_rot_batch[tr] = iscl_rot;
-            beap_xxyy_batch[tr] = beap_xxyy[isect_id];
+            if (beap_ray_pruning) {
+                beap_xxyy_batch[tr] = beap_xxyy[isect_id];
+            }
         }
 
         // wait for other threads to collect the gaussians in batch
@@ -251,11 +267,13 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
         // process gaussians in the current batch for this pixel
         uint32_t batch_size = min(block_size, range_end - batch_start);
         for (uint32_t t = 0; (t < batch_size) && !done; ++t) {
-            const vec4 b_xxyy = beap_xxyy_batch[t];
-            if (((camera_ray_dir.x / camera_ray_dir.z) < b_xxyy.x) || ((camera_ray_dir.x / camera_ray_dir.z) > b_xxyy.y))
-				continue;
-			if (((camera_ray_dir.y / camera_ray_dir.z) < b_xxyy.z) || ((camera_ray_dir.y / camera_ray_dir.z) > b_xxyy.w))
-				continue;
+            if (beap_ray_pruning) {
+                const vec4 b_xxyy = beap_xxyy_batch[t];
+                if (((camera_ray_dir.x / camera_ray_dir.z) < b_xxyy.x) || ((camera_ray_dir.x / camera_ray_dir.z) > b_xxyy.y))
+                    continue;
+                if (((camera_ray_dir.y / camera_ray_dir.z) < b_xxyy.z) || ((camera_ray_dir.y / camera_ray_dir.z) > b_xxyy.w))
+                    continue;
+            }
 
             const vec4 xyz_opac = xyz_opacity_batch[t];
             const float opac = xyz_opac[3];
@@ -364,9 +382,11 @@ void launch_rasterize_to_pixels_from_world_3dgs_fwd_kernel(
     dim3 threads = {tile_size, tile_size, 1};
     dim3 grid = {I, tile_height, tile_width};
 
-    int64_t shmem_size =
-        tile_size * tile_size * 
-        (sizeof(int32_t) + sizeof(vec4) + sizeof(mat3) + sizeof(vec4));
+    int64_t gauss_mem_size = sizeof(int32_t) + sizeof(vec4) + sizeof(mat3);
+    if (beap_xxyy.has_value()) {
+        gauss_mem_size += sizeof(vec4); // for beap xxyy storage
+    }
+    int64_t shmem_size = tile_size * tile_size * gauss_mem_size;
 
     // TODO: an optimization can be done by passing the actual number of
     // channels into the kernel functions and avoid necessary global memory
