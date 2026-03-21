@@ -28,7 +28,12 @@ cd 3dgeer
 pip install -e . --no-build-isolation
 ```
 
-5. Set the `with_geer` and `with_eval3d` flags to `True` in your `gsplat` `rasterization()` function call.
+5. Compile C++ library
+```bash
+python setup.py develop
+```
+
+6. Set the `with_geer` and `with_eval3d` flags to `True` in your `gsplat` `rasterization()` function call.
 ```python
 with_geer=True, with_eval3d=True
 ```
