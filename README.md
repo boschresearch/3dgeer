@@ -2,8 +2,6 @@
 <h1><code>gsplat-geer</code>: An Open-Source Library for Exact and Efficient Gaussian Rendering</h1>
 </div>
 
-⚠️ Work in Progress: This repository is currently undergoing cleanup and restructuring.
-
 `gsplat-geer` is an extension of the open-source [`gsplat`](https://github.com/nerfstudio-project/gsplat) library from [Nerfstudio](https://docs.nerf.studio/) for 3DGEER-based rasterization.
 
 ## 📷`gsplat` Rasterization
@@ -16,6 +14,11 @@ This repo extends the [`rasterization()`](https://docs.gsplat.studio/main/apis/r
 setting the distortion parameters to `radial_coeffs` and set `camera_model="fisheye"`.
 
 These are consistent with `gsplat`'s 3DGUT implementation (`with_ut`).
+
+## 🧩TODO
+- [ ] Fix the CUDA issues in `gsplat-geer` extension
+- [ ] Enable the interactive viewer for DriveStudio
+- [ ] Demo adding CAD models into distorted camera-rendered scenes
 
 ## 🏃Quick Start
 ### Training
