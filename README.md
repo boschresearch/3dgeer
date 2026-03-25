@@ -88,7 +88,7 @@ This repository contains the official authors implementation associated with the
 
 ## 📷3DGEER-CUDA-Rasterizer
 The full CUDA implementation can be found here: [./submodules/geer-rasterizer/](./submodules/geer-rasterizer/).
-#### Key Insight 1: Fixing the Math Behind Gaussian Rendering
+#### Key Insight 1: Fixing the Math Behind Gaussian Projection
 
 - Ray–Gaussian Integral (Forward & Backward): Analytical forward rendering and numerical stable backward gradient computation. (See [paper](https://arxiv.org/pdf/2505.24053) Appendix C for the math.)
 
