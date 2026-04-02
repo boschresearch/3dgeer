@@ -1,5 +1,12 @@
 import numpy as np
 import torch
+import math
+
+def focal2fov(focal, pixels):
+    return 2*math.atan(pixels/(2*focal))
+
+def focal2fov2(focal, pixels):
+    return pixels / focal
 
 def focal2halffov2(focal, pixels):
     return pixels / 2 / focal
@@ -15,14 +22,20 @@ def fov_sample2ray(fovx, fovy, interval):
 def omni_map_z(m, z, xi=0.0): #1.1
     return m / (1+xi*(z/(torch.abs(z)))*(1+m**2)**0.5)
 
-def omni_tan(Ks, width, height, step, fov_mod=1, data_device="cuda"):
+def omni_tan(Ks, width, height, camera_model, step, fov_mod=1.75, data_device="cuda"):
     # Ks [..., C, 3, 3]
-    fx = Ks[..., 0, 0].to(data_device)
-    fy = Ks[..., 1, 1].to(data_device)
+    K = Ks.to("cpu").squeeze() # one image
 
-    # get largest camera fov (capped at np.pi/2)
-    FoVx = min(focal2halffov2(fx, width).max().item() * fov_mod, np.pi / 2)
-    FoVy = min(focal2halffov2(fy, height).max().item() * fov_mod, np.pi / 2)
+    focal_length_x = K[0, 0]
+    focal_length_y = K[1, 1]
+
+    if camera_model == "pinhole":
+        FoVx = focal2fov(focal_length_x, width)
+        FoVy = focal2fov(focal_length_y, height)
+    elif camera_model == "fisheye":
+        # Change the fov to match the undistorted image
+        FoVx = min(np.pi, focal2fov2(focal_length_x, width) * fov_mod) #/ 0.8
+        FoVy = min(np.pi, focal2fov2(focal_length_y, height) * fov_mod) #/ 0.8
 
     arr_theta, arr_phi = fov_sample2ray(FoVx/2, FoVy/2, step)
 
@@ -38,7 +51,7 @@ def omni_tan(Ks, width, height, step, fov_mod=1, data_device="cuda"):
     omni_tan_theta = omni_map_z(tan_theta, cos_theta)
     omni_tan_phi = omni_map_z(tan_phi, cos_phi)
 
-    tanfovx = np.tan(FoVx)
-    tanfovy = np.tan(FoVy)
+    tanfovx = np.tan(FoVx * 0.5)
+    tanfovy = np.tan(FoVy * 0.5)
 
     return omni_tan_theta, omni_tan_phi, tanfovx, tanfovy

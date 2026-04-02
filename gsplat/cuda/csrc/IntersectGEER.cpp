@@ -216,7 +216,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> intersect_tile_geer(
 
 
 
-    at::Tensor cum_tiles_per_gauss = at::cumsum(tiles_per_gauss.view({-1}), 0);
+    at::Tensor cum_tiles_per_gauss = at::cumsum(tiles_per_gauss.view({-1}).to(at::kLong), 0);
     int64_t n_isects = cum_tiles_per_gauss[cum_tiles_per_gauss.size(0) - 1].item<int64_t>();
 
     at::Tensor isect_ids = at::empty({n_isects}, opt.dtype(at::kLong));

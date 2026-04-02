@@ -750,7 +750,7 @@ def rasterization(
     # Identify intersecting tiles
     tile_width = math.ceil(width / float(tile_size))
     tile_height = math.ceil(height / float(tile_size))
-    omni_tan_theta, omni_tan_phi, tanfovx, tanfovy = omni_tan(Ks, width, height, step=0.002)
+    omni_tan_theta, omni_tan_phi, tanfovx, tanfovy = omni_tan(Ks, width, height, camera_model, step=0.002)
     isect_geer_output = isect_tiles_geer(
         means=means,
         quats=quats,
@@ -783,7 +783,7 @@ def rasterization(
     if with_geer:
         tiles_per_gauss, isect_ids, flatten_ids, beap_xxyy = isect_geer_output
     else:
-        tiles_per_gauss, isect_ids, flatten_ids, ranges, unsorted_isect_ids = isect_tiles(
+        tiles_per_gauss, isect_ids, flatten_ids = isect_tiles(
             means2d,
             radii,
             depths,
