@@ -296,6 +296,7 @@ def readColmapCameras_fisheye(cam_extrinsics, cam_intrinsics, images_folder, fov
             principal_y = intr.params[2]
             FovY = focal2fov(focal_length_x, height)
             FovX = focal2fov(focal_length_x, width)
+            distortion_coeffs = np.zeros(4, dtype=np.float64)
         elif intr.model=="PINHOLE":
             focal_length_x = intr.params[0]
             focal_length_y = intr.params[1]
@@ -303,6 +304,7 @@ def readColmapCameras_fisheye(cam_extrinsics, cam_intrinsics, images_folder, fov
             principal_y = intr.params[3]
             FovY = focal2fov(focal_length_y, height)
             FovX = focal2fov(focal_length_x, width)
+            distortion_coeffs = np.zeros(4, dtype=np.float64)
         elif intr.model=="OPENCV_FISHEYE": #SCANNET++
             assert len(intr.params) == 8, "Expected 8 parameters for OPENCV_FISHEYE"
             focal_length_x = intr.params[0]
@@ -313,6 +315,7 @@ def readColmapCameras_fisheye(cam_extrinsics, cam_intrinsics, images_folder, fov
             fov_mod = 1.0 if fov_mod is None else fov_mod
             FovY = min(np.pi, focal2fov2(focal_length_y, height) * fov_mod) #/ 0.8
             FovX = min(np.pi, focal2fov2(focal_length_x, width) * fov_mod) #/ 0.8
+            distortion_coeffs = intr.params[4:8]
         else:
             assert False, "Colmap camera model not handled: only undistorted datasets (PINHOLE, SIMPLE_PINHOLE, OPENCV_FISHEYE cameras) supported!"
 
@@ -327,7 +330,7 @@ def readColmapCameras_fisheye(cam_extrinsics, cam_intrinsics, images_folder, fov
         cam_info = CameraInfo_fisheye(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, 
                                       focal_x=focal_length_x, focal_y=focal_length_y,
                                       principal_x=principal_x, principal_y=principal_y,
-                                      distortion_coeffs=intr.params[4:],
+                                      distortion_coeffs=distortion_coeffs,
                                       image=image,
                                       image_path=image_path, image_name=image_name, width=width, height=height)
         cam_infos.append(cam_info)

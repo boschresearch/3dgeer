@@ -361,8 +361,10 @@ class MiniCam:
         fy = params[1]
         cx = params[2]
         cy = params[3]
-        distortion_params = params[4:]
-        kk = distortion_params
+        kk = np.asarray(params[4:], dtype=np.float64)
+        if kk.size < 4:
+            kk = np.pad(kk, (0, 4 - kk.size), mode="constant")
+        kk = kk[:4]
         tan_theta, tan_phi = fov2tan(self.FoVx/2, self.FoVy/2, self.sample_step)
         radius = np.sqrt(tan_theta ** 2 + tan_phi ** 2)
         theta = np.arctan(radius)

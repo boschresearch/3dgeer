@@ -962,16 +962,6 @@ __global__ void preprocessCUDA(int P, int D, int M,
 
 	pbf_tan[idx] = tan_xxyy;
 	tiles_touched[idx] = (rect_max.y - rect_min.y) * (rect_max.x - rect_min.x);
-	if ((xmap != nullptr) && (mode == 1)) { // optimize tilestouched only for kb (mode == 1)
-		tiles_touched[idx] = duplicateToTilesTouched(
-			p_view, w2o + 3*idx, h_opacity[idx].y,
-			screen_grid_aligned_pbf, tan_xxyy, grid,
-			W, H,
-			0, 0, 0, nullptr, nullptr,
-			xmap,
-			ymap
-		);
-	}
 }
 
 // Main rasterization method. Collaboratively works on one tile per
@@ -1007,6 +997,7 @@ renderCUDA(
 	uint2 pix_min = { block.group_index().x * BLOCK_X, block.group_index().y * BLOCK_Y };
 	uint2 pix = { pix_min.x + block.thread_index().x, pix_min.y + block.thread_index().y };
 	uint32_t pix_id = W * pix.y + pix.x;
+	bool inside = pix.x < W && pix.y < H;
 	float3 rayf;
 	// if (raymap == nullptr) {
 	// 	rayf = make_float3((float)tan_theta[min(pix.x, W-1)], (float)tan_phi[min(pix.y, H-1)], 1.f);
@@ -1016,13 +1007,12 @@ renderCUDA(
 	if (mode == 0) {
 		rayf = make_float3((float)tan_theta[min(pix.x, W-1)], (float)tan_phi[min(pix.y, H-1)], 1.f);
 	} else if (mode == 1) {
-		rayf = make_float3((float)raymap[pix_id * 3], (float)raymap[pix_id * 3 + 1],(float)raymap[pix_id * 3 + 2]);
+		rayf = inside
+			? make_float3((float)raymap[pix_id * 3], (float)raymap[pix_id * 3 + 1], (float)raymap[pix_id * 3 + 2])
+			: make_float3(0.0f, 0.0f, 1.0f);
 	} else {
 		rayf = { ((float)pix.x + 0.5f) / focal_x - W / (2.0f * focal_x), ((float)pix.y + 0.5f) / focal_y - H / (2.0f * focal_y), 1.0f };
 	}
-
-	// Check if this thread is associated with a valid pixel or outside.
-	bool inside = pix.x < W && pix.y < H;
 
 	// Done threads can help with fetching, but don't rasterize
 	bool done = !inside;

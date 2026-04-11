@@ -110,6 +110,8 @@ __global__ void duplicateWithKeys(
 	// Generate no key/value pair for invisible Gaussians
 	if ((radii[idx] > 0) && (tiles_touched[idx] > 0))
 	{
+		const bool use_kb_sorted_tile_culling = false;
+
 		// Find this Gaussian's offset in buffer for writing keys/values.
 		uint32_t off = (idx == 0) ? 0 : offsets[idx - 1];
 
@@ -120,7 +122,7 @@ __global__ void duplicateWithKeys(
 		// and the value is the ID of the Gaussian. Sorting the values 
 		// with this key yields Gaussian IDs in a list, such that they
 		// are first sorted by tile and then by depth. 
-		if ((xmap == nullptr) || (mode != 1)) {
+		if ((xmap == nullptr) || (mode != 1) || !use_kb_sorted_tile_culling) {
 			uint2 rect_min, rect_max;
 			getRect2(pbf[idx], rect_min, rect_max, grid);
 	

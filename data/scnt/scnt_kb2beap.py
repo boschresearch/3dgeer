@@ -78,6 +78,12 @@ def fov2tan(fovx, fovy, interval):
 def focal2halffov2(focal, pixels):
     return pixels / 2 / focal
 
+def get_kb_coeffs(params):
+    coeffs = np.asarray(params[4:], dtype=np.float64)
+    if coeffs.size < 4:
+        coeffs = np.pad(coeffs, (0, 4 - coeffs.size), mode="constant")
+    return coeffs[:4]
+
 def prepare_sibr_cfg(args):
     root_dir = args.path
     cam_root_dir = args.cam_path
@@ -135,8 +141,7 @@ def colmap_main(args):
     print("FOVy in deg: ", 2 * FoVy * 180 / np.pi)
     tan_theta, tan_phi = fov2tan(FoVx, FoVy, args.step)
     
-    distortion_params = params[4:]
-    kk = distortion_params
+    kk = get_kb_coeffs(params)
     
     frames = sorted(os.listdir(input_image_dir))
     radius = np.sqrt(tan_theta ** 2 + tan_phi ** 2)

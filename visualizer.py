@@ -24,7 +24,8 @@ from utils.image_utils import match_mask_to_image
 
 def visualize(dataset, opt, pipe, iteration, sample_step, fov_mod, mask_path,
               sibr_mask_refcam=None, render_model='BEAP', focal_scaling=1.0,
-              distortion_scaling=1.0, mirror_shift=0.0, raymap_path=None):
+              distortion_scaling=1.0, mirror_shift=0.0, raymap_path=None,
+              near_threshold=0.2):
     """
     Load a trained checkpoint and serve the SIBR online viewer via network_gui.
     This mirrors the network_gui loop from train.py but runs indefinitely after
@@ -99,7 +100,14 @@ def visualize(dataset, opt, pipe, iteration, sample_step, fov_mod, mask_path,
                      width, height) = network_gui.receive(extra_params)
 
                     if custom_cam is not None:
-                        net_image = render(custom_cam, gaussians, pipe, background, scaling_modifier)["render"]
+                        net_image = render(
+                            custom_cam,
+                            gaussians,
+                            pipe,
+                            background,
+                            scaling_modifier,
+                            near_threshold=near_threshold,
+                        )["render"]
 
                         if sibr_mask_refcam is not None:
                             net_mask = custom_cam.get_viewpoint_mask(sibr_mask_refcam)
@@ -147,6 +155,7 @@ if __name__ == "__main__":
     parser.add_argument('--mirror_shift', type=float, default=0.0)
     parser.add_argument('--raymap_path', type=str, default=None,
                         help="Path to pre-generated raymap .npy file (required for KB mode)")
+    parser.add_argument('--near_threshold', type=float, default=0.2)
 
     args = get_combined_args(parser)
 
@@ -164,6 +173,7 @@ if __name__ == "__main__":
         ('mask_path', getattr(args, 'mask_path', None)),
         ('sibr_mask_refcam', getattr(args, 'sibr_mask_refcam', None)),
         ('raymap_path', getattr(args, 'raymap_path', None)),
+        ('near_threshold', 0.2),
     ]:
         if not hasattr(args, attr) or getattr(args, attr) is None:
             setattr(args, attr, default)
@@ -188,4 +198,5 @@ if __name__ == "__main__":
         args.distortion_scaling,
         args.mirror_shift,
         args.raymap_path,
+        args.near_threshold,
     )

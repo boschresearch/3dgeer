@@ -108,9 +108,9 @@ The full CUDA implementation can be found here: [./submodules/geer-rasterizer/](
 
 - Bipolar Equiangular Projection: Maintains uniform ray sampling across arbitrary fields of view, thereby providing stable, FoV-invariant supervision for radiance field training.
 
-  <div align="center">
-    <img src="assets/beap.gif" width="60%">
-  </div>
+<div align="center">
+  <img src="assets/beap.gif" width="60%">
+</div>
 
 ## 🔧Dependency and Viewer Setup
 #### Conda Based Installation
@@ -153,6 +153,10 @@ $sibr_rg
 ```
 - **For offline visualization**, We recommend using our [`gsplat-geer`](https://github.com/boschresearch/3dgeer/tree/gsplat-geer) implementation, built on top of: https://github.com/nerfstudio-project/gsplat/blob/main/docs/3dgut.md 
 > Note: the mismatched culling issue in UT is resolved using our PBF-based fix.
+
+<div align="center">
+  <img src="assets/demo_sibr.gif" width="100%">
+</div>
 
 ## 🏃Quick Start
 ### 1. Data Preparation
