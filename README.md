@@ -112,7 +112,7 @@ The full CUDA implementation can be found here: [./submodules/geer-rasterizer/](
   <img src="assets/beap.gif" width="60%">
 </div>
 
-## 🔧Dependency and Viewer Setup
+## 🔧Dependency
 #### Conda Based Installation
 Following the 3dgs dependencies https://github.com/graphdeco-inria/gaussian-splatting to install the 3dgs environment, and then run the following command to replace the `diff-gaussian-rasterization` for using a geer-version CUDA rasterizer:
 ```sh
@@ -129,6 +129,7 @@ bash ./docker/init_my_docker.sh
 pip install --no-build-isolation ./submodules/geer-rasterizer
 ```
 
+## 🔧Interactive Viewer Setup
 <div align="center">
   <img src="assets/demo_sibr.gif" width="100%">
 </div>
