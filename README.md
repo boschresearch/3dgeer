@@ -128,6 +128,11 @@ bash ./docker/init_my_docker.sh
 # If you modify algorithm upon our geer-rasterizer, inside docker container, recompile:
 pip install --no-build-isolation ./submodules/geer-rasterizer
 ```
+
+<div align="center">
+  <img src="assets/demo_sibr.gif" width="100%">
+</div>
+
 #### SIBR Viewer Configuration with Docker 
 **⚠️ Important Notice on Visualization:**
 `SIBR_gaussianViewer_app` is currently not supported for Gaussian Exact and Efficient Rendering (GEER).
@@ -154,9 +159,6 @@ $sibr_rg
 - **For offline visualization**, We recommend using our [`gsplat-geer`](https://github.com/boschresearch/3dgeer/tree/gsplat-geer) implementation, built on top of: https://github.com/nerfstudio-project/gsplat/blob/main/docs/3dgut.md 
 > Note: the mismatched culling issue in UT is resolved using our PBF-based fix.
 
-<div align="center">
-  <img src="assets/demo_sibr.gif" width="100%">
-</div>
 
 ## 🏃Quick Start
 ### 1. Data Preparation
