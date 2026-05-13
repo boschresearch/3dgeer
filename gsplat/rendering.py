@@ -562,7 +562,7 @@ def rasterization(
     if compensations is not None:
         opacities = opacities * compensations
 
-    if with_geer and with_eval3d:
+    if with_eval3d:
         means2d = means2d.detach()
 
     meta.update(
