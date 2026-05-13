@@ -47,8 +47,6 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
     const scalar_t *__restrict__ tangential_coeffs, // [B, C, 2] optional
     const scalar_t *__restrict__ thin_prism_coeffs, // [B, C, 4] optional
     const FThetaCameraDistortionParameters ftheta_coeffs, // shared parameters for all cameras
-    // geer,
-    const vec4 *__restrict__ beap_xxyy,
     // intersections
     const int32_t *__restrict__ tile_offsets, // [B, C, tile_height, tile_width]
     const int32_t *__restrict__ flatten_ids,  // [n_isects]
@@ -90,12 +88,9 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
     // shift pointers to the current camera. note that glm is colume-major.
     const vec2 focal_length = {Ks[iid * 9 + 0], Ks[iid * 9 + 4]};
     const vec2 principal_point = {Ks[iid * 9 + 2], Ks[iid * 9 + 5]};
-
-    const bool beap_ray_pruning = beap_xxyy != nullptr;
     
     // Create ray from pixel
     WorldRay ray;
-    vec3 camera_ray_dir;
     if (camera_model_type == CameraModelType::PINHOLE) {
         if (radial_coeffs == nullptr && tangential_coeffs == nullptr && thin_prism_coeffs == nullptr) {
             PerfectPinholeCameraModel::Parameters cm_params = {};
@@ -105,8 +100,6 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
             cm_params.focal_length = { focal_length.x, focal_length.y };
             PerfectPinholeCameraModel camera_model(cm_params);
             ray = camera_model.image_point_to_world_ray_shutter_pose(vec2(px, py), rs_params);
-            if (beap_ray_pruning) 
-                camera_ray_dir = camera_model.image_point_to_camera_ray(vec2(px, py)).ray_dir;
         } else {
             OpenCVPinholeCameraModel<>::Parameters cm_params = {};
             cm_params.resolution = {image_width, image_height};
@@ -124,8 +117,6 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
             }
             OpenCVPinholeCameraModel camera_model(cm_params);
             ray = camera_model.image_point_to_world_ray_shutter_pose(vec2(px, py), rs_params);
-            if (beap_ray_pruning) 
-                camera_ray_dir = camera_model.image_point_to_camera_ray(vec2(px, py)).ray_dir;
         }
     } else if (camera_model_type == CameraModelType::FISHEYE) {
         OpenCVFisheyeCameraModel<>::Parameters cm_params = {};
@@ -146,8 +137,6 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
         }
         OpenCVFisheyeCameraModel camera_model(cm_params);
         ray = camera_model.image_point_to_world_ray_shutter_pose(vec2(px, py), rs_params);
-        if (beap_ray_pruning) 
-            camera_ray_dir = camera_model.image_point_to_camera_ray(vec2(px, py)).ray_dir;
     } else if (camera_model_type == CameraModelType::FTHETA) {
         FThetaCameraModel<>::Parameters cm_params = {};
         cm_params.resolution = {image_width, image_height};
@@ -156,8 +145,6 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
         cm_params.dist = ftheta_coeffs;
         FThetaCameraModel camera_model(cm_params);
         ray = camera_model.image_point_to_world_ray_shutter_pose(vec2(px, py), rs_params);
-        if (beap_ray_pruning) 
-            camera_ray_dir = camera_model.image_point_to_camera_ray(vec2(px, py)).ray_dir;
     } else {
         // should never reach here
         assert(false);
@@ -200,8 +187,6 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
         reinterpret_cast<vec4 *>(&id_batch[block_size]); // [block_size]
     mat3 *iscl_rot_batch =
         reinterpret_cast<mat3 *>(&xyz_opacity_batch[block_size]); // [block_size]
-    vec4 *beap_xxyy_batch = beap_ray_pruning ? reinterpret_cast<vec4 *>(&iscl_rot_batch[block_size])
-                                             : nullptr;
     
     // current visibility left to render
     // transmittance is gonna be used in the backward pass which requires a high
@@ -256,9 +241,6 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
             );
             mat3 iscl_rot = S * glm::transpose(R);
             iscl_rot_batch[tr] = iscl_rot;
-            if (beap_ray_pruning) {
-                beap_xxyy_batch[tr] = beap_xxyy[isect_id];
-            }
         }
 
         // wait for other threads to collect the gaussians in batch
@@ -267,14 +249,6 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
         // process gaussians in the current batch for this pixel
         uint32_t batch_size = min(block_size, range_end - batch_start);
         for (uint32_t t = 0; (t < batch_size) && !done; ++t) {
-            if (beap_ray_pruning) {
-                const vec4 b_xxyy = beap_xxyy_batch[t];
-                if (((camera_ray_dir.x / camera_ray_dir.z) < b_xxyy.x) || ((camera_ray_dir.x / camera_ray_dir.z) > b_xxyy.y))
-                    continue;
-                if (((camera_ray_dir.y / camera_ray_dir.z) < b_xxyy.z) || ((camera_ray_dir.y / camera_ray_dir.z) > b_xxyy.w))
-                    continue;
-            }
-
             const vec4 xyz_opac = xyz_opacity_batch[t];
             const float opac = xyz_opac[3];
             const vec3 xyz = {xyz_opac[0], xyz_opac[1], xyz_opac[2]};            
@@ -354,8 +328,6 @@ void launch_rasterize_to_pixels_from_world_3dgs_fwd_kernel(
     const at::optional<at::Tensor> tangential_coeffs, // [..., C, 2] optional
     const at::optional<at::Tensor> thin_prism_coeffs, // [..., C, 4] optional
     const FThetaCameraDistortionParameters ftheta_coeffs, // shared parameters for all cameras
-    // geer,
-    const at::optional<at::Tensor> beap_xxyy,
     // intersections
     const at::Tensor tile_offsets, // [..., C, tile_height, tile_width]
     const at::Tensor flatten_ids,  // [n_isects]
@@ -383,9 +355,6 @@ void launch_rasterize_to_pixels_from_world_3dgs_fwd_kernel(
     dim3 grid = {I, tile_height, tile_width};
 
     int64_t gauss_mem_size = sizeof(int32_t) + sizeof(vec4) + sizeof(mat3);
-    if (beap_xxyy.has_value()) {
-        gauss_mem_size += sizeof(vec4); // for beap xxyy storage
-    }
     int64_t shmem_size = tile_size * tile_size * gauss_mem_size;
 
     // TODO: an optimization can be done by passing the actual number of
@@ -441,8 +410,6 @@ void launch_rasterize_to_pixels_from_world_3dgs_fwd_kernel(
                 ? thin_prism_coeffs.value().data_ptr<float>()
                 : nullptr,
             ftheta_coeffs,
-            // geer,
-            beap_xxyy.has_value() ? reinterpret_cast<vec4 *>(beap_xxyy.value().data_ptr<float>()) : nullptr,
             // intersections
             tile_offsets.data_ptr<int32_t>(),
             flatten_ids.data_ptr<int32_t>(),
@@ -477,7 +444,6 @@ void launch_rasterize_to_pixels_from_world_3dgs_fwd_kernel(
         const at::optional<at::Tensor> tangential_coeffs,                     \
         const at::optional<at::Tensor> thin_prism_coeffs,                     \
         const FThetaCameraDistortionParameters ftheta_coeffs,                 \
-        const at::optional<at::Tensor> beap_xxyy,                             \
         const at::Tensor tile_offsets,                                         \
         const at::Tensor flatten_ids,                                          \
         const at::Tensor renders,                                              \

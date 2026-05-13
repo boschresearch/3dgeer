@@ -562,6 +562,9 @@ def rasterization(
     if compensations is not None:
         opacities = opacities * compensations
 
+    if with_geer and with_eval3d:
+        means2d = means2d.detach()
+
     meta.update(
         {
             # global batch and camera ids
@@ -763,8 +766,17 @@ def rasterization(
     if with_geer:
         assert packed == False, "Packed is True, remove later"
         # Identify intersecting tiles
-        tanfovx, tanfovy, mirror_transformed_tan_theta, mirror_transformed_tan_phi = get_camera_tanfov(camera_model, Ks, width, height)
-        tiles_per_gauss, isect_ids, flatten_ids, beap_xxyy = isect_tiles_geer(
+        tanfovx, tanfovy, mirror_transformed_tan_theta, mirror_transformed_tan_phi = get_camera_tanfov(
+            camera_model,
+            Ks,
+            width,
+            height,
+            radial_coeffs=radial_coeffs,
+            tangential_coeffs=tangential_coeffs,
+            thin_prism_coeffs=thin_prism_coeffs,
+            ftheta_coeffs=ftheta_coeffs,
+        )
+        tiles_per_gauss, isect_ids, flatten_ids = isect_tiles_geer(
             means=means,
             quats=quats,
             scales=scales,
@@ -807,7 +819,6 @@ def rasterization(
             image_ids=image_ids,
             gaussian_ids=gaussian_ids
         )
-        beap_xxyy = None
     
     # print(np.allclose(isect_ids.cpu().numpy(), unsorted_isect_ids.cpu().numpy()))
     
@@ -864,7 +875,6 @@ def rasterization(
                     tangential_coeffs=tangential_coeffs,
                     thin_prism_coeffs=thin_prism_coeffs,
                     ftheta_coeffs=ftheta_coeffs,
-                    beap_xxyy=beap_xxyy,
                     rolling_shutter=rolling_shutter,
                     viewmats_rs=viewmats_rs,
                 )
@@ -908,7 +918,6 @@ def rasterization(
                 tangential_coeffs=tangential_coeffs,
                 thin_prism_coeffs=thin_prism_coeffs,
                 ftheta_coeffs=ftheta_coeffs,
-                beap_xxyy=beap_xxyy,
                 rolling_shutter=rolling_shutter,
                 viewmats_rs=viewmats_rs,
             )

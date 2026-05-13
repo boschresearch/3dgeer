@@ -16,7 +16,7 @@
 namespace gsplat {
 
 // TODO: Integrate camera parallelization
-std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> intersect_tile_geer(
+std::tuple<at::Tensor, at::Tensor, at::Tensor> intersect_tile_geer(
     const int P, // N, num_gaussians
 
     const at::Tensor means,                // [N, 3]
@@ -293,9 +293,9 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> intersect_tile_geer(
             );
         }
 
-        return std::make_tuple(tiles_per_gauss, isect_ids_sorted, flatten_ids_sorted, beap_xxyy);
+        return std::make_tuple(tiles_per_gauss, isect_ids_sorted, flatten_ids_sorted);
     } else {
-        return std::make_tuple(tiles_per_gauss, isect_ids, flatten_ids, beap_xxyy);
+        return std::make_tuple(tiles_per_gauss, isect_ids, flatten_ids);
     }
     // return std::make_tuple(
     //     at::Tensor(), at::Tensor(), at::Tensor(),

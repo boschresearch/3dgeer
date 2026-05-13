@@ -215,7 +215,7 @@ at::Tensor intersect_offset(
     const uint32_t tile_height
 );
 
-std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor> intersect_tile_geer(
+std::tuple<at::Tensor, at::Tensor, at::Tensor> intersect_tile_geer(
     const int P, // N, num_gaussians
 
     const at::Tensor means,                // [N, 3]
@@ -602,8 +602,6 @@ rasterize_to_pixels_from_world_3dgs_fwd(
     const at::optional<at::Tensor> tangential_coeffs, // [..., C, 2] optional
     const at::optional<at::Tensor> thin_prism_coeffs, // [..., C, 4] optional
     const FThetaCameraDistortionParameters ftheta_coeffs, // shared parameters for all cameras
-    // geer
-    const at::optional<at::Tensor> beap_xxyy,
     // intersections
     const at::Tensor tile_offsets, // [..., C, tile_height, tile_width]
     const at::Tensor flatten_ids   // [n_isects]
