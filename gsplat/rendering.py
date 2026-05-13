@@ -465,7 +465,7 @@ def rasterization(
         # Silently change C from local #Cameras to global #Cameras.
         C = len(viewmats)
 
-    if with_ut or with_geer:
+    if with_ut:
         proj_results = fully_fused_projection_with_ut(
             means,
             quats,
