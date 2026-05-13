@@ -646,7 +646,7 @@ def isect_tiles_geer(
     )
 
     # radial_coeffs = None
-    tiles_per_gauss, isect_ids, flatten_ids, beap_xxyy = _make_lazy_cuda_func("intersect_tile_geer")(
+    tiles_per_gauss, isect_ids, flatten_ids = _make_lazy_cuda_func("intersect_tile_geer")(
         N,
         means.contiguous(),
         quats.contiguous(),
@@ -670,36 +670,10 @@ def isect_tiles_geer(
         tile_size,
         tile_width,
         tile_height,
-        
-        # width,
-        # height,
 
-        # means2d.contiguous(),
-        # radii.contiguous(),
-        # depths.contiguous(),
-        # image_ids,
-        # gaussian_ids,
-        # I,
-        # tile_size,
-        # tile_width,
-        # tile_height,
         sort,
-        # segmented,
     )
-    # print("SJEIOFJOSIEFJ")
-    # temp = tiles_per_gauss.cpu().numpy()
-    # aabb_cpu = aabb.cpu().numpy()
-    # print(temp)
-    # print(temp.min(), temp.max())
-    # print(aabb_cpu[5841])
-    # print(beap_xxyy[5841])
-
-
-
-    # plt.hist(temp)
-    # plt.show()
-
-    return tiles_per_gauss, isect_ids, flatten_ids, beap_xxyy
+    return tiles_per_gauss, isect_ids, flatten_ids
 
 
 @torch.no_grad()
@@ -882,8 +856,6 @@ def rasterize_to_pixels_eval3d(
     tangential_coeffs: Optional[Tensor] = None,  # [..., C, 2]
     thin_prism_coeffs: Optional[Tensor] = None,  # [..., C, 4]
     ftheta_coeffs: Optional[FThetaCameraDistortionParameters] = None,
-    # geer
-    beap_xxyy: Optional[Tensor] = None,
     # rolling shutter
     rolling_shutter: RollingShutterType = RollingShutterType.GLOBAL,
     viewmats_rs: Optional[Tensor] = None,  # [..., C, 4, 4]
@@ -1026,8 +998,6 @@ def rasterize_to_pixels_eval3d(
         tangential_coeffs.contiguous() if tangential_coeffs is not None else None,
         thin_prism_coeffs.contiguous() if thin_prism_coeffs is not None else None,
         ftheta_coeffs,
-        # geer
-        beap_xxyy.contiguous() if beap_xxyy is not None else None,
         # rolling shutter
         rolling_shutter,
         viewmats_rs.contiguous() if viewmats_rs is not None else None,
@@ -1752,8 +1722,6 @@ class _RasterizeToPixelsEval3D(torch.autograd.Function):
         tangential_coeffs: Optional[Tensor] = None,  # [..., C, 2]
         thin_prism_coeffs: Optional[Tensor] = None,  # [..., C, 4]
         ftheta_coeffs: Optional[FThetaCameraDistortionParameters] = None,
-        # geer
-        beap_xxyy: Optional[Tensor] = None,
         # rolling shutter
         rolling_shutter: RollingShutterType = RollingShutterType.GLOBAL,
         viewmats_rs: Optional[Tensor] = None,  # [..., C, 4, 4]
@@ -1792,7 +1760,6 @@ class _RasterizeToPixelsEval3D(torch.autograd.Function):
             tangential_coeffs,
             thin_prism_coeffs,
             ftheta_coeffs,
-            beap_xxyy,
             isect_offsets,
             flatten_ids,
         )

@@ -717,8 +717,6 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> rasterize_to_pixels_from_world_3d
     const at::optional<at::Tensor> tangential_coeffs, // [..., C, 2] optional
     const at::optional<at::Tensor> thin_prism_coeffs, // [..., C, 4] optional
     const FThetaCameraDistortionParameters ftheta_coeffs, // shared parameters for all cameras
-    // geer,
-    const at::optional<at::Tensor> beap_xxyy,
     // intersections
     const at::Tensor tile_offsets, // [..., C, tile_height, tile_width]
     const at::Tensor flatten_ids   // [n_isects]
@@ -743,7 +741,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> rasterize_to_pixels_from_world_3d
     uint32_t C = viewmats0.size(-3);     // number of cameras
     // uint32_t N = means.size(-2);         // number of gaussians
     uint32_t channels = colors.size(-1);
-    assert (channels == 3); // only support RGB for now
+    // assert (channels == 3); // only support RGB for now
 
     at::DimVector renders_shape(batch_dims);
     renders_shape.append({C, image_height, image_width, channels});
@@ -780,7 +778,6 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> rasterize_to_pixels_from_world_3d
             tangential_coeffs,                                                 \
             thin_prism_coeffs,                                                 \
             ftheta_coeffs,                                                     \
-            beap_xxyy,                                                              \
             tile_offsets,                                                      \
             flatten_ids,                                                       \
             renders,                                                           \
