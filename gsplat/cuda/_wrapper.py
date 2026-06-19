@@ -531,6 +531,7 @@ def isect_tiles_geer(
     radial_coeffs: Optional[Tensor], # [..., C, 6] or [..., C, 4]
     near_plane: float,
 	far_plane: float,
+    radius_clip: float,
 
     mirror_transformed_tan_theta: Optional[Tensor],  # [X1] width bin length
     mirror_transformed_tan_phi: Optional[Tensor],  # [X2] height bin length
@@ -659,6 +660,7 @@ def isect_tiles_geer(
         radial_coeffs.contiguous() if radial_coeffs is not None else radial_coeffs,
         near_plane,
         far_plane,
+        radius_clip,
 
         mirror_transformed_tan_theta.contiguous() if mirror_transformed_tan_theta is not None else mirror_transformed_tan_theta,
         mirror_transformed_tan_phi.contiguous() if mirror_transformed_tan_phi is not None else mirror_transformed_tan_phi,

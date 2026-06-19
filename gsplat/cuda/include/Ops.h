@@ -229,6 +229,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> intersect_tile_geer(
     const at::optional<at::Tensor> radial_coeffs, // [C, 4] or [C, 6]
     const float near_plane,
 	const float far_plane,
+    const float radius_clip,
 
     const at::optional<at::Tensor> mirror_transformed_tan_theta, // tan_theta of mirror transformed PBF
     const at::optional<at::Tensor> mirror_transformed_tan_phi, // tan_phi of mirror transformed PBF

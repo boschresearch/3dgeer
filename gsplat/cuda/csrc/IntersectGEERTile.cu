@@ -34,6 +34,7 @@ __forceinline__ __device__ bool in_frustum(int idx,
 	const float* orig_points,
 	const float* viewmatrix,
 	const float near_plane,
+	const float far_plane,
 	// bool prefiltered,
 	float3& p_view)
 {
@@ -42,7 +43,7 @@ __forceinline__ __device__ bool in_frustum(int idx,
 	// Bring points to screen space 
 	p_view = transformPoint4x3(p_orig, viewmatrix);
 
- 	if (p_view.z <= near_plane)
+	if (p_view.z <= near_plane || p_view.z >= far_plane)
 	{
 		// if (prefiltered)
 		// {
@@ -485,6 +486,7 @@ __global__ void preprocess_gaussians_kernel(
     const float* radial_coeffs, // [C, 4] or [C, 6]
 	const float near_plane,
 	const float far_plane,
+	const float radius_clip,
 
     const int tile_size, const int tile_width, const int tile_height,
 
@@ -536,7 +538,7 @@ __global__ void preprocess_gaussians_kernel(
 
 	// Perform near culling, quit if outside.
 	float3 p_view;
-	if (!in_frustum(idx, means3D, viewmatrix, near_plane,
+	if (!in_frustum(idx, means3D, viewmatrix, near_plane, far_plane,
     // prefiltered,
         p_view
     ))
@@ -650,6 +652,8 @@ __global__ void preprocess_gaussians_kernel(
 	if ((rect_max.x - rect_min.x) * (rect_max.y - rect_min.y) == 0)
 		return;
 	int my_radius = max(rect_max.x - rect_min.x, rect_max.y - rect_min.y);
+	if (my_radius <= radius_clip)
+		return;
 
 	// If colors have been precomputed, use them, otherwise convert
 	// spherical harmonics coefficients to RGB color.
@@ -742,6 +746,7 @@ void preprocess_gaussians(
 	const float* radial_coeffs, // [C, 4] or [C, 6]
 	const float near_plane,
 	const float far_plane,
+	const float radius_clip,
 
     const int tile_size, const int tile_width, const int tile_height,
 
@@ -785,6 +790,7 @@ void preprocess_gaussians(
 		radial_coeffs,
 		near_plane,
 		far_plane,
+		radius_clip,
 
         tile_size, tile_width, tile_height,
 

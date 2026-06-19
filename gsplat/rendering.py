@@ -787,6 +787,7 @@ def rasterization(
             radial_coeffs=radial_coeffs,
             near_plane=near_plane,
             far_plane=far_plane,
+            radius_clip=radius_clip,
 
             mirror_transformed_tan_theta=mirror_transformed_tan_theta,
             mirror_transformed_tan_phi=mirror_transformed_tan_phi,

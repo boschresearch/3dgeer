@@ -30,6 +30,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> intersect_tile_geer(
     const at::optional<at::Tensor> radial_coeffs, // [C, 4] or [C, 6]
     const float near_plane,
 	const float far_plane,
+    const float radius_clip,
 
     const at::optional<at::Tensor> mirror_transformed_tan_theta, // tan_theta of mirror transformed PBF
     const at::optional<at::Tensor> mirror_transformed_tan_phi, // tan_phi of mirror transformed PBF
@@ -113,7 +114,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> intersect_tile_geer(
         // const float principal_x, float principal_y,
         camera_model, // const CameraModelType camera_model,
         default_radial_coeffs.contiguous().data_ptr<float>(), // const float* kb_coeff,
-        near_plane, far_plane,
+        near_plane, far_plane, radius_clip,
         tile_size, tile_width, tile_height,
 
         // Outputs (except xmap, ymap, h_opacity, prefiltered, and antialiasing)

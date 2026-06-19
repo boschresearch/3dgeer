@@ -31,6 +31,7 @@ void preprocess_gaussians(
 	const float* radial_coeffs, // [C, 4] or [C, 6]
 	const float near_plane,
 	const float far_plane,
+	const float radius_clip,
 
     const int tile_size, const int tile_width, const int tile_height,
 
