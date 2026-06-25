@@ -76,7 +76,8 @@ This repository contains the official authors implementation associated with the
   <img src="assets/drive-geer.gif" alt="teaser" style="width: 100%;">
 </p>
 
-- **TBD**: `drivestudio-geer` and `stormGaussian-geer` will be released [here](#special-extension) as well!
+- **TBD**: `stormGaussian-geer` will be released [here](#special-extension) as well.
+- **2026-06-25**: [`drivestudio-geer`](https://github.com/boschresearch/3dgeer/blob/gsplat-geer/app/drivestudio-geer/README.md) is released under our `gsplat-geer` branch, including a dynamic, temporal viewer!
 - **2026-03-19**: 3DGEER now supports **dynamic outdoor scene** rendering under **wide-FoV fisheye** cameras with the integration into DriveStudio.
 - **2026-03-17**: `SIBR_remoteGaussian_app` is adapted to our work as an interactive viewer for training and trained checkpoints. Try the `BEAP` mode in the viewer; `Pinhole` and `Fisheye` modes are supported as well.
 - **2026-03-09**: `gsplat-geer` released [here](#special-extension)!
@@ -246,6 +247,10 @@ You can download our trained checkpoints for the following open dataset:
 <p align="center">
   <a href='https://github.com/boschresearch/3dgeer/tree/gsplat-geer'><img src="assets/gsplat-geer.gif" alt="teaser" style="width: 100%;"></a>
   3DGEER supports the opensource community with <code>gsplat</code> integration. <br />Check out our <a href='https://github.com/boschresearch/3dgeer/tree/gsplat-geer'><code>gsplat-geer</code></a> branch for details.
+</p>
+<p align="center">
+  <a href='https://github.com/boschresearch/3dgeer/blob/gsplat-geer/app/drivestudio-geer/README.md'><img src="assets/drivestudio_viewer_fisheye_demo.gif" alt="teaser" style="width: 100%;"></a>
+  3DGEER now has <code>drivestudio</code> integration, with a dynamic, temporal viewer! <br />Check out the <a href='https://github.com/boschresearch/3dgeer/blob/gsplat-geer/app/drivestudio-geer/README.md'><code>drivestudio-geer</code></a> README in our <code>gsplat-geer</code> branch to get started.
 </p>
 
 ## ⛽️Contributing
