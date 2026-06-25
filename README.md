@@ -17,7 +17,6 @@ set the distortion parameters to `radial_coeffs` and set `camera_model="fisheye"
 These are consistent with `gsplat`'s 3DGUT implementation (`with_ut`).
 
 ## 🧩TODO
-- [ ] Enable the interactive viewer for DriveStudio
 - [ ] Demo adding CAD models into distorted camera-rendered scenes
 
 ## 🏃Quick Start
@@ -83,7 +82,9 @@ CUDA_VISIBLE_DEVICES=0 python simple_viewer.py \
 
 ## ✨Opensource Community 
 ### `drivestudio-geer` 
-> Our version TBD. To use `gsplat-geer` in `drivestudio`, update `drivestudio` to be compatible with `gsplat==1.5.3` and then follow the steps [here](app/).
+> We have released integration with [DriveStudio](https://github.com/ziyc/drivestudio)! In our patch, we provide 3DGEER and 3DGUT training and rendering with a dynamic, temporal Viser viewer for viewing trained representations.
+<img src='assets/drivestudio_viewer_fisheye_demo.gif' alt='drivestudio-geer' style='width: 100%;'>
+> 🏃To get started, follow the steps [here](app/drivestudio-geer/README.md).
 ### `stormGaussian-geer`
 > TBD
 ### How to use in your project
