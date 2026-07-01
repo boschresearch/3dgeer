@@ -197,7 +197,7 @@ index 0000000..258865d
 +      ins_translation:
 +        lr: 0.0005
 +        lr_final: 0.0001
-+  SMPLNodes: 
++  SMPLNodes:
 +    type: models.nodes.SMPLNodes
 +    init:
 +      only_moving: true
@@ -296,7 +296,7 @@ index 0000000..258865d
 +  fps: 10 # frames per second for the main rendered output
 +  render_full: True # whether to render full resolution videos
 +  render_test: True # whether to render test set
-+  render_novel: 
++  render_novel:
 +    traj_types:
 +      - front_center_interp # type of trajectory for novel view synthesis
 +    fps: 24 # frames per second for novel view rendering
@@ -350,7 +350,7 @@ index 81acb3d..bf053ee 100644
 +        self.human_masks = None
 +        self.vehicle_masks = None
 +        self.sky_masks = None
-+        
++
          if load_dynamic_mask:
              self.load_dynamic_masks()
          if load_sky_mask:
@@ -643,7 +643,7 @@ index 2f959bf..93ebf0d 100644
          
 +        if depth is not None:
 +            results["depth"] = depth
-+        
++
          if self.training:
 -            self.info["means2d"].retain_grad()
 +            if cfg_render_mode == "default":
@@ -3554,7 +3554,7 @@ index 0000000..37572b6
 +    parser.add_argument(
 +        "--port", type=int, default=8080, help="port for the viewer server"
 +    )
-+    
++
 +    args = parser.parse_args()
 +    cli(main, args, verbose=True)
 -- 
