@@ -984,6 +984,13 @@ projection_ut_3dgs_fused(
         compensations = at::zeros(compensations_shape, opt);
     }
 
+    at::Tensor fisheye_max_angles;
+    if (camera_model == CameraModelType::FISHEYE) {
+        fisheye_max_angles = prepare_opencv_fisheye_max_angles(
+            Ks, image_width, image_height, radial_coeffs
+        );
+    }
+
     launch_projection_ut_3dgs_fused_kernel(
         // inputs
         means,
@@ -1007,6 +1014,7 @@ projection_ut_3dgs_fused(
         tangential_coeffs,
         thin_prism_coeffs,
         ftheta_coeffs,
+        fisheye_max_angles,
         // outputs
         radii,
         means2d,
@@ -1099,6 +1107,13 @@ projection_geer_3dgs_fused(
         compensations = at::zeros(compensations_shape, opt);
     }
 
+    at::Tensor fisheye_max_angles;
+    if (camera_model == CameraModelType::FISHEYE) {
+        fisheye_max_angles = prepare_opencv_fisheye_max_angles(
+            Ks, image_width, image_height, radial_coeffs
+        );
+    }
+
     launch_projection_geer_3dgs_fused_kernel(
         // inputs
         means,
@@ -1122,6 +1137,7 @@ projection_geer_3dgs_fused(
         tangential_coeffs,
         thin_prism_coeffs,
         ftheta_coeffs,
+        fisheye_max_angles,
         // outputs
         radii,
         means2d,

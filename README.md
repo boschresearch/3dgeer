@@ -85,8 +85,10 @@ CUDA_VISIBLE_DEVICES=0 python simple_viewer.py \
 > We have released integration with [DriveStudio](https://github.com/ziyc/drivestudio)! In our patch, we provide 3DGEER and 3DGUT training and rendering with a dynamic, temporal Viser viewer for viewing trained representations.
 <img src='assets/drivestudio_viewer_fisheye_demo.gif' alt='drivestudio-geer' style='width: 100%;'>
 > 🏃To get started, follow the steps [here](app/drivestudio-geer/README.md).
+
 ### `stormGaussian-geer`
 > TBD
+
 ### How to use in your project
 > See [./app](app/) for details.
 

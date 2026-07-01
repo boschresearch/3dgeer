@@ -39,6 +39,7 @@ __global__ void projection_geer_3dgs_fused_kernel(
     const scalar_t *__restrict__ tangential_coeffs, // [B, C, 2] optional
     const scalar_t *__restrict__ thin_prism_coeffs, // [B, C, 4] optional
     const FThetaCameraDistortionParameters ftheta_coeffs, // shared parameters for all cameras
+    const float *__restrict__ fisheye_max_angles, // [B, C]
     // outputs
     int32_t *__restrict__ radii,         // [B, C, N, 2]
     scalar_t *__restrict__ means2d,      // [B, C, N, 2]
@@ -127,7 +128,10 @@ __global__ void projection_geer_3dgs_fused_kernel(
         if (radial_coeffs != nullptr) {
             cm_params.radial_coeffs = make_array<float, 4>(radial_coeffs + bid * C * 4 + cid * 4);
         }
-        OpenCVFisheyeCameraModel camera_model(cm_params);
+        assert(fisheye_max_angles != nullptr);
+        OpenCVFisheyeCameraModel camera_model(
+            cm_params, 1e-6f, fisheye_max_angles[bid * C + cid]
+        );
         image_gaussian_return =
             world_gaussian_to_image_gaussian_unscented_transform_shutter_pose(
                 camera_model, rs_params, ut_params, mean, scale, quat);
@@ -240,6 +244,7 @@ void launch_projection_geer_3dgs_fused_kernel(
     const at::optional<at::Tensor> tangential_coeffs, // [..., C, 2] optional
     const at::optional<at::Tensor> thin_prism_coeffs, // [..., C, 4] optional
     const FThetaCameraDistortionParameters ftheta_coeffs, // shared parameters for all cameras
+    const at::Tensor fisheye_max_angles, // [..., C], defined for fisheye
     // outputs
     at::Tensor radii,                      // [..., C, N, 2]
     at::Tensor means2d,                    // [..., C, N, 2]
@@ -296,6 +301,9 @@ void launch_projection_geer_3dgs_fused_kernel(
                 ? thin_prism_coeffs.value().data_ptr<float>()
                 : nullptr,
             ftheta_coeffs,
+            fisheye_max_angles.defined()
+                ? fisheye_max_angles.data_ptr<float>()
+                : nullptr,
             radii.data_ptr<int32_t>(),
             means2d.data_ptr<float>(),
             depths.data_ptr<float>(),

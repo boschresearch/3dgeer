@@ -32,6 +32,15 @@ std::tuple<at::Tensor, at::Tensor> projection_ewa_simple_bwd(
 );
 
 // Generate a per-pixel camera-space raymap for the requested camera model.
+// Internal helper: prepare the expensive camera-invariant fisheye FOV limit
+// once per camera.
+at::Tensor prepare_opencv_fisheye_max_angles(
+    const at::Tensor Ks,                      // [..., 3, 3]
+    const uint32_t image_width,
+    const uint32_t image_height,
+    const at::optional<at::Tensor> radial_coeffs // [..., 4] optional
+);
+
 at::Tensor compute_raymap(
     const at::Tensor Ks,                      // [..., 3, 3]
     const uint32_t image_width,

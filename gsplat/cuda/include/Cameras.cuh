@@ -860,7 +860,9 @@ struct OpenCVFisheyeCameraModel
     };
 
     __host__ __device__ OpenCVFisheyeCameraModel(
-        Parameters const &parameters, float min_2d_norm = 1e-6f
+        Parameters const &parameters,
+        float min_2d_norm = 1e-6f,
+        float precomputed_max_angle = -1.f
     )
         : parameters(parameters), min_2d_norm(min_2d_norm) {
         // initialize ninth-degree odd-only forward polynomial (mapping angles
@@ -879,44 +881,78 @@ struct OpenCVFisheyeCameraModel
         auto const max_diag_y =
             max(parameters.resolution[1] - parameters.principal_point[1],
                 parameters.principal_point[1]);
-        auto const max_radius_pixels =
-            std::sqrt(max_diag_x * max_diag_x + max_diag_y * max_diag_y);
+        // The farthest corner must be measured in normalized image
+        // coordinates. Dividing a pixel-space diagonal by one focal length
+        // overestimates the radius when fx != fy.
+        auto const max_normalized_dist = numerically_stable_norm2(
+            max_diag_x / parameters.focal_length[0],
+            max_diag_y / parameters.focal_length[1]
+        );
 
-        if (k4 == 0) {
-            max_angle = std::sqrt(
-                compute_opencv_fisheye_max_angle(3.f * k1, 5.f * k2, 7.f * k3)
-            );
+        if (precomputed_max_angle > 0.f) {
+            // The expensive, camera-invariant solve was performed once by the
+            // caller instead of once per pixel / Gaussian.
+            max_angle = precomputed_max_angle;
         } else {
-            std::array<float, 4> ddforward_poly_odd = {
-                6 * k1, 20 * k2, 42 * k3, 72 * k4
-            };
-            std::array<float, 1> approx = {1.57f};
+            if (k4 == 0) {
+                max_angle = std::sqrt(
+                    compute_opencv_fisheye_max_angle(
+                        3.f * k1, 5.f * k2, 7.f * k3
+                    )
+                );
+            } else {
+                std::array<float, 4> ddforward_poly_odd = {
+                    6 * k1, 20 * k2, 42 * k3, 72 * k4
+                };
+                std::array<float, 1> approx = {1.57f};
 
-            bool converged = false;
-            max_angle = eval_poly_inverse_horner_newton<N_NEWTON_ITERATIONS>(
-                PolynomialProxy<PolynomialType::EVEN, 5>{dforward_poly_even},
-                PolynomialProxy<PolynomialType::ODD, 4>{ddforward_poly_odd},
-                PolynomialProxy<PolynomialType::EVEN, 1>{approx},
-                0.f,
-                converged
-            );
-            if (!converged || max_angle <= 0.f) {
-                max_angle = std::numeric_limits<float>::max();
+                bool converged = false;
+                max_angle =
+                    eval_poly_inverse_horner_newton<N_NEWTON_ITERATIONS>(
+                        PolynomialProxy<PolynomialType::EVEN, 5>{
+                            dforward_poly_even
+                        },
+                        PolynomialProxy<PolynomialType::ODD, 4>{
+                            ddforward_poly_odd
+                        },
+                        PolynomialProxy<PolynomialType::EVEN, 1>{approx},
+                        0.f,
+                        converged
+                    );
+                if (!converged || max_angle <= 0.f) {
+                    max_angle = std::numeric_limits<float>::max();
+                }
             }
-        }
 
-        max_angle =
-            min(max_angle,
-                max(max_radius_pixels / parameters.focal_length[0],
-                    max_radius_pixels / parameters.focal_length[1]));
+            // Compute the true maximum angle by inverting the forward
+            // polynomial at the farthest normalized image corner. The
+            // equidistant approximation is exact only when all distortion
+            // coefficients are zero; for sub-equidistant lenses it
+            // underestimates the corner angle and rejects valid pixels.
+            // Linear (equidistant) initial guess: theta_0 = normalized radius.
+            std::array<float, 2> corner_approx = {0.f, 1.f};
+            bool corner_converged = false;
+            auto corner_max_angle =
+                eval_poly_inverse_horner_newton<N_NEWTON_ITERATIONS>(
+                    PolynomialProxy<PolynomialType::ODD, 5>{forward_poly_odd},
+                    PolynomialProxy<PolynomialType::EVEN, 5>{
+                        dforward_poly_even
+                    },
+                    PolynomialProxy<PolynomialType::FULL, 2>{corner_approx},
+                    max_normalized_dist,
+                    corner_converged
+                );
+            max_angle = min(
+                max_angle,
+                corner_converged && corner_max_angle > 0.f
+                    ? corner_max_angle
+                    : max_normalized_dist
+            );
+        }
 
         // approximate backward poly (mapping normalized distances to angles)
         // *very crudely* by linear interpolation / equidistant angle model
         // (also assuming image-centered principal point)
-        auto const max_normalized_dist = std::max(
-            parameters.resolution[0] / 2.f / parameters.focal_length[0],
-            parameters.resolution[1] / 2.f / parameters.focal_length[1]
-        );
         approx_backward_poly = {0.f, max_angle / max_normalized_dist};
     }
 
@@ -1339,149 +1375,3 @@ world_gaussian_to_image_gaussian_unscented_transform_shutter_pose(
 
     return {image_mean, image_covariance, valid};
 }
-
-// ---------------------------------------------------------------------------------------------
-
-// 3DGEER Ray Particle Association with BEAP representation
-
-// See
-//
-// - "3DGEER: 3D GAUSSIAN RENDERING MADE EXACT AND EFFICIENT FOR GENERIC
-// CAMERAS" - Huang 2026
-//
-// for references
-
-// Perform initial steps for each Gaussian prior to rasterization.
-// template<int C>
-// __global__ void preprocessCUDA(int P, int D, int M,
-// 	const float* orig_points,
-// 	const glm::vec3* scales,
-// 	const float scale_modifier,
-// 	const glm::vec4* rotations,
-// 	const float* opacities,
-// 	const float* shs,
-// 	bool* clamped,
-// 	const float* colors_precomp,
-// 	const float* viewmatrix,
-// 	const float* ref_tan_x, // tan_theta of mirror transformed PBF 
-// 	const float* ref_tan_y, // tan_phi of mirror transformed PBF 
-// 	const glm::vec3* cam_pos,
-// 	const int W, int H,
-// 	const float tan_fovx, float tan_fovy,
-// 	const float focal_x, float focal_y,
-// 	const float principal_x, float principal_y,
-// 	const float* kb_coeff,
-// 	int* radii,
-// 	int* aabb_id,
-// 	float4* beap_xxyy,
-// 	const float* xmap, 
-// 	const float* ymap, 
-// 	float3* points_xyz_view,
-// 	float* depths,
-// 	float* rgb,
-// 	float2* h_opacity,
-// 	float3* w2o, 
-// 	const dim3 grid,
-// 	uint32_t* tiles_touched,
-// 	bool prefiltered,
-// 	bool antialiasing)
-// {
-// 	auto idx = cg::this_grid().thread_rank();
-// 	if (idx >= P)
-// 		return;
-
-// 	// Initialize radius and touched tiles to 0. If this isn't changed,
-// 	// this Gaussian will not be processed further.
-// 	radii[idx] = 0;
-// 	aabb_id[idx * 4] = 0; 
-// 	aabb_id[idx * 4 + 1] = 0;
-// 	aabb_id[idx * 4 + 2] = 0; 
-// 	aabb_id[idx * 4 + 3] = 0; 
-
-// 	tiles_touched[idx] = 0;
-
-// 	// Perform near culling, quit if outside.
-// 	float3 p_view;
-// 	if (!in_frustum(idx, orig_points, viewmatrix, prefiltered, p_view))
-// 		return;
-
-// 	glm::mat3 R_view = computeRotationMatrix(rotations[idx], viewmatrix);
-// 	float cutoff = 3.0f;
-// 	float3 p_view_identity = {orig_points[3 * idx] + viewmatrix[12], orig_points[3 * idx + 1] + viewmatrix[13], orig_points[3 * idx + 2] + viewmatrix[14]};
-// 	if (!omni_hvar(scales[idx], scale_modifier, opacities[idx], h_opacity + idx, true)) return;
-
-// 	// Prepare world-to-canonical transformation maxtrix for exact ray-Gaussian integral
-// 	// see details in 3DGEER https://openreview.net/pdf?id=4voMNlRWI7, Eq.3 
-// 	w2o[idx * 3 + 0] = toFloat3(R_view[0] / (sqrtf(sq(scales[idx].x) + h_opacity[idx].x) * scale_modifier));
-// 	w2o[idx * 3 + 1] = toFloat3(R_view[1] / (sqrtf(sq(scales[idx].y) + h_opacity[idx].x) * scale_modifier));
-// 	w2o[idx * 3 + 2] = toFloat3(R_view[2] / (sqrtf(sq(scales[idx].z) + h_opacity[idx].x) * scale_modifier));
-
-// 	points_xyz_view[idx] = p_view;
-
-// 	// Compute exact and tight Particle Bounding Frustum (PBF);
-// 	// see details in 3DGEER paper: https://openreview.net/pdf?id=4voMNlRWI7, Eq.10 (mathmatical proof in Sec.D.1)
-// 	float4 tan_xxyy; // clamped tan value in x / y dir, i.e., tan_theta, tan_phi
-// 	if (!computePBF(scales[idx], scale_modifier, R_view, p_view, cutoff, tan_xxyy, tan_fovx, tan_fovy, h_opacity[idx].x)) return;
-// 	if ((tan_xxyy.y - tan_xxyy.x) * (tan_xxyy.w - tan_xxyy.z) == 0)
-// 		return;
-
-// 	int _aa[2];
-// 	int _bb[2];
-// 	if (xmap == nullptr)
-// 	{
-// 		// Convert PBF into BEAP space;
-// 		searchsorted_aabb(ref_tan_x, W, ref_tan_y, H, (float*)(&tan_xxyy), _aa, _bb);
-// 	} else {
-// 		// Bound PBF into KB imaging space;
-// 		const float4* kb_params4 = reinterpret_cast<const float4*>(kb_coeff);
-// 		const float4 kb_params = kb_params4[0];
-// 		invinterpolated_aabb(W, H, focal_x, focal_y, principal_x, principal_y, kb_params, tan_xxyy, _aa, _bb);
-// 	}
-// 	int4 _aabb = {_aa[0], _aa[1], _bb[0], _bb[1]};
-// 	if ((_aabb.y - _aabb.x) * (_aabb.w - _aabb.z) == 0)
-// 		return;
-
-// 	int4 my_aabb = _aabb;
-// 	float2 point_image = { (my_aabb.y + my_aabb.x)/2.f, (my_aabb.w + my_aabb.z)/2.f };
-
-// 	uint2 rect_min, rect_max;
-// 	getRect2(my_aabb, rect_min, rect_max, grid);
-// 	if ((rect_max.x - rect_min.x) * (rect_max.y - rect_min.y) == 0)
-// 		return;
-// 	int my_radius = max(rect_max.x - rect_min.x, rect_max.y - rect_min.y);
-
-// 	// If colors have been precomputed, use them, otherwise convert
-// 	// spherical harmonics coefficients to RGB color.
-// 	if (colors_precomp == nullptr)
-// 	{
-// 		glm::vec3 result = computeColorFromSH(idx, D, M, (glm::vec3*)orig_points, *cam_pos, shs, clamped);
-// 		rgb[idx * C + 0] = result.x;
-// 		rgb[idx * C + 1] = result.y;
-// 		rgb[idx * C + 2] = result.z;
-// 	}
-
-// 	// Store some useful helper data for the next steps.
-// 	depths[idx] = sqrtf((p_view.z * p_view.z) + (p_view.x * p_view.x) + (p_view.y * p_view.y));
-// 	radii[idx] = my_radius;
-	
-// 	aabb_id[idx * 4] = my_aabb.x; 
-// 	aabb_id[idx * 4 + 1] = my_aabb.y;
-// 	aabb_id[idx * 4 + 2] = my_aabb.z;
-// 	aabb_id[idx * 4 + 3] = my_aabb.w;
-
-// 	beap_xxyy[idx] = tan_xxyy;
-
-// 	if (xmap == nullptr)
-// 	{
-// 		tiles_touched[idx] = (rect_max.y - rect_min.y) * (rect_max.x - rect_min.x);
-// 	} else {
-// 		tiles_touched[idx] = duplicateToTilesTouched(
-// 			p_view, w2o + 3*idx, h_opacity[idx].y,
-// 			my_aabb, tan_xxyy, grid,
-// 			W, H,
-// 			0, 0, 0, nullptr, nullptr,
-// 			xmap,
-// 			ymap
-// 		);
-// 	}
-// }

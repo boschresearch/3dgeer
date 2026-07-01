@@ -272,6 +272,7 @@ void launch_projection_ut_3dgs_fused_kernel(
     const at::optional<at::Tensor> tangential_coeffs, // [C, 2] optional
     const at::optional<at::Tensor> thin_prism_coeffs, // [C, 4] optional
     const FThetaCameraDistortionParameters ftheta_coeffs, // shared parameters for all cameras
+    const at::Tensor fisheye_max_angles, // [..., C], defined for fisheye
     // outputs
     at::Tensor radii,                      // [C, N, 2]
     at::Tensor means2d,                    // [C, N, 2]
@@ -303,6 +304,7 @@ void launch_projection_geer_3dgs_fused_kernel(
     const at::optional<at::Tensor> tangential_coeffs, // [C, 2] optional
     const at::optional<at::Tensor> thin_prism_coeffs, // [C, 4] optional
     const FThetaCameraDistortionParameters ftheta_coeffs, // shared parameters for all cameras
+    const at::Tensor fisheye_max_angles, // [..., C], defined for fisheye
     // outputs
     at::Tensor radii,                      // [C, N, 2]
     at::Tensor means2d,                    // [C, N, 2]

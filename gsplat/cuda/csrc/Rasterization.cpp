@@ -755,6 +755,13 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> rasterize_to_pixels_from_world_3d
     last_ids_shape.append({C, image_height, image_width});
     at::Tensor last_ids = at::empty(last_ids_shape, opt.dtype(at::kInt));
 
+    at::Tensor fisheye_max_angles;
+    if (camera_model == CameraModelType::FISHEYE) {
+        fisheye_max_angles = prepare_opencv_fisheye_max_angles(
+            Ks, image_width, image_height, radial_coeffs
+        );
+    }
+
 #define __LAUNCH_KERNEL__(N)                                                   \
     case N:                                                                    \
         launch_rasterize_to_pixels_from_world_3dgs_fwd_kernel<N>(              \
@@ -778,6 +785,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> rasterize_to_pixels_from_world_3d
             tangential_coeffs,                                                 \
             thin_prism_coeffs,                                                 \
             ftheta_coeffs,                                                     \
+            fisheye_max_angles,                                                \
             tile_offsets,                                                      \
             flatten_ids,                                                       \
             renders,                                                           \
@@ -881,6 +889,13 @@ rasterize_to_pixels_from_world_3dgs_bwd(
     at::Tensor v_colors = at::zeros_like(colors);
     at::Tensor v_opacities = at::zeros_like(opacities);
 
+    at::Tensor fisheye_max_angles;
+    if (camera_model == CameraModelType::FISHEYE) {
+        fisheye_max_angles = prepare_opencv_fisheye_max_angles(
+            Ks, image_width, image_height, radial_coeffs
+        );
+    }
+
 #define __LAUNCH_KERNEL__(N)                                                   \
     case N:                                                                    \
         launch_rasterize_to_pixels_from_world_3dgs_bwd_kernel<N>(              \
@@ -904,6 +919,7 @@ rasterize_to_pixels_from_world_3dgs_bwd(
             tangential_coeffs,                                                \
             thin_prism_coeffs,                                               \
             ftheta_coeffs,                                                     \
+            fisheye_max_angles,                                                \
             tile_offsets,                                                      \
             flatten_ids,                                                       \
             render_alphas,                                                     \

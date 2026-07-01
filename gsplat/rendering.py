@@ -14,7 +14,6 @@ from .cuda._wrapper import (
     fully_fused_projection,
     fully_fused_projection_2dgs,
     fully_fused_projection_with_ut,
-    fully_fused_projection_with_geer,
     isect_offset_encode,
     isect_tiles,
     isect_tiles_geer,
@@ -488,30 +487,6 @@ def rasterization(
             rolling_shutter=rolling_shutter,
             viewmats_rs=viewmats_rs,
         )
-    
-    # elif with_geer:
-    #     proj_results = fully_fused_projection_with_geer(
-    #         means,
-    #         quats,
-    #         scales,
-    #         opacities,  # use opacities to compute a tigher bound for radii.
-    #         viewmats,
-    #         Ks,
-    #         width,
-    #         height,
-    #         eps2d=eps2d,
-    #         near_plane=near_plane,
-    #         far_plane=far_plane,
-    #         radius_clip=radius_clip,
-    #         calc_compensations=(rasterize_mode == "antialiased"),
-    #         camera_model=camera_model,
-    #         radial_coeffs=radial_coeffs,
-    #         tangential_coeffs=tangential_coeffs,
-    #         thin_prism_coeffs=thin_prism_coeffs,
-    #         ftheta_coeffs=ftheta_coeffs,
-    #         rolling_shutter=rolling_shutter,
-    #         viewmats_rs=viewmats_rs,
-    #     )
 
     else:
         # Project Gaussians to 2D. Directly pass in {quats, scales} is faster than precomputing covars.
@@ -760,11 +735,10 @@ def rasterization(
     else:  # RGB
         pass
     
-    # TODO: GEER implementation
     tile_width = math.ceil(width / float(tile_size))
     tile_height = math.ceil(height / float(tile_size))
     if with_geer:
-        assert packed == False, "Packed is True, remove later"
+        assert packed == False
         # Identify intersecting tiles
         tanfovx, tanfovy, mirror_transformed_tan_theta, mirror_transformed_tan_phi = get_camera_tanfov(
             camera_model,

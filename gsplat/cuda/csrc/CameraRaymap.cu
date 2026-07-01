@@ -16,6 +16,78 @@ namespace gsplat {
 
 namespace cg = cooperative_groups;
 
+__global__ void prepare_opencv_fisheye_max_angles_kernel(
+    const uint32_t B,
+    const uint32_t image_width,
+    const uint32_t image_height,
+    const float *__restrict__ Ks,           // [B, 3, 3]
+    const float *__restrict__ radial_coeffs, // [B, 4]
+    float *__restrict__ max_angles           // [B]
+) {
+    const uint32_t camera_index =
+        blockIdx.x * blockDim.x + threadIdx.x;
+    if (camera_index >= B) {
+        return;
+    }
+
+    OpenCVFisheyeCameraModel<>::Parameters cm_params = {};
+    cm_params.resolution = {image_width, image_height};
+    cm_params.shutter_type = ShutterType::GLOBAL;
+    cm_params.principal_point = {
+        Ks[camera_index * 9 + 2], Ks[camera_index * 9 + 5]
+    };
+    cm_params.focal_length = {
+        Ks[camera_index * 9 + 0], Ks[camera_index * 9 + 4]
+    };
+    if (radial_coeffs != nullptr) {
+        cm_params.radial_coeffs =
+            make_array<float, 4>(radial_coeffs + camera_index * 4);
+    }
+
+    // This is the only constructor invocation per camera that performs the
+    // maximum-angle root solve.
+    OpenCVFisheyeCameraModel camera_model(cm_params);
+    max_angles[camera_index] = camera_model.max_angle;
+}
+
+at::Tensor prepare_opencv_fisheye_max_angles(
+    const at::Tensor Ks,
+    const uint32_t image_width,
+    const uint32_t image_height,
+    const at::optional<at::Tensor> radial_coeffs
+) {
+    DEVICE_GUARD(Ks);
+    CHECK_INPUT(Ks);
+    if (radial_coeffs.has_value()) {
+        CHECK_INPUT(radial_coeffs.value());
+    }
+
+    at::DimVector batch_dims(Ks.sizes().slice(0, Ks.dim() - 2));
+    const uint32_t B = Ks.numel() / 9;
+    at::Tensor max_angles = at::empty(batch_dims, Ks.options());
+    if (B == 0) {
+        return max_angles;
+    }
+
+    constexpr uint32_t block_size = 256;
+    const uint32_t grid_size = (B + block_size - 1) / block_size;
+    prepare_opencv_fisheye_max_angles_kernel<<<
+        grid_size,
+        block_size,
+        0,
+        at::cuda::getCurrentCUDAStream()>>>(
+        B,
+        image_width,
+        image_height,
+        Ks.data_ptr<float>(),
+        radial_coeffs.has_value()
+            ? radial_coeffs.value().data_ptr<float>()
+            : nullptr,
+        max_angles.data_ptr<float>()
+    );
+    return max_angles;
+}
+
 __device__ inline vec3 compute_ray_direction_from_camera_model(
     const uint32_t image_width,
     const uint32_t image_height,
@@ -27,6 +99,7 @@ __device__ inline vec3 compute_ray_direction_from_camera_model(
     const float *__restrict__ radial_coeffs,
     const float *__restrict__ tangential_coeffs,
     const float *__restrict__ thin_prism_coeffs,
+    const float *__restrict__ fisheye_max_angles,
     const FThetaCameraDistortionParameters ftheta_coeffs
 ) {
     const vec2 focal_length = {
@@ -90,7 +163,10 @@ __device__ inline vec3 compute_ray_direction_from_camera_model(
         if (radial_coeffs != nullptr) {
             cm_params.radial_coeffs = make_array<float, 4>(radial_coeffs + camera_index * 4);
         }
-        OpenCVFisheyeCameraModel camera_model(cm_params);
+        assert(fisheye_max_angles != nullptr);
+        OpenCVFisheyeCameraModel camera_model(
+            cm_params, 1e-6f, fisheye_max_angles[camera_index]
+        );
         auto const camera_ray = camera_model.image_point_to_camera_ray(vec2(px, py));
         if (camera_ray.valid_flag) {
             ray_dir = camera_ray.ray_dir;
@@ -125,6 +201,7 @@ __global__ void compute_raymap_kernel(
     const float *__restrict__ radial_coeffs,      // [B, 6] or [B, 4]
     const float *__restrict__ tangential_coeffs,  // [B, 2]
     const float *__restrict__ thin_prism_coeffs,  // [B, 4]
+    const float *__restrict__ fisheye_max_angles, // [B]
     const FThetaCameraDistortionParameters ftheta_coeffs,
     float *__restrict__ raymap                    // [B, image_height, image_width, 3]
 ) {
@@ -150,6 +227,7 @@ __global__ void compute_raymap_kernel(
         radial_coeffs,
         tangential_coeffs,
         thin_prism_coeffs,
+        fisheye_max_angles,
         ftheta_coeffs
     );
 
@@ -191,6 +269,12 @@ at::Tensor compute_raymap(
     at::DimVector raymap_shape(batch_dims);
     raymap_shape.append({image_height, image_width, 3});
     at::Tensor raymaps = at::empty(raymap_shape, opt);
+    at::Tensor fisheye_max_angles;
+    if (camera_model == CameraModelType::FISHEYE) {
+        fisheye_max_angles = prepare_opencv_fisheye_max_angles(
+            Ks, image_width, image_height, radial_coeffs
+        );
+    }
 
     constexpr uint32_t tile_size = 16;
     const uint32_t tile_height = (image_height + tile_size - 1) / tile_size;
@@ -208,6 +292,9 @@ at::Tensor compute_raymap(
         radial_coeffs.has_value() ? radial_coeffs.value().data_ptr<float>() : nullptr,
         tangential_coeffs.has_value() ? tangential_coeffs.value().data_ptr<float>() : nullptr,
         thin_prism_coeffs.has_value() ? thin_prism_coeffs.value().data_ptr<float>() : nullptr,
+        fisheye_max_angles.defined()
+            ? fisheye_max_angles.data_ptr<float>()
+            : nullptr,
         ftheta_coeffs,
         raymaps.data_ptr<float>()
     );
