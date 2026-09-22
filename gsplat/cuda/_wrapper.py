@@ -529,12 +529,13 @@ def isect_tiles_geer(
     camera_model: Literal["pinhole", "ortho", "fisheye", "ftheta"],
     Ks: Tensor,  # [..., C, 3, 3]
     radial_coeffs: Optional[Tensor], # [..., C, 6] or [..., C, 4]
+    tangential_coeffs: Optional[Tensor], # [..., C, 2]
+    thin_prism_coeffs: Optional[Tensor], # [..., C, 4]
+    ftheta_coeffs: Optional[FThetaCameraDistortionParameters],
     near_plane: float,
-	far_plane: float,
+    far_plane: float,
     radius_clip: float,
 
-    mirror_transformed_tan_theta: Optional[Tensor],  # [X1] width bin length
-    mirror_transformed_tan_phi: Optional[Tensor],  # [X2] height bin length
     image_width: int,
     image_height: int,
     tanfovx: float,
@@ -544,138 +545,73 @@ def isect_tiles_geer(
     tile_width: int,
     tile_height: int,
 
-    segmented: bool = False,
     packed: bool = False,
-    n_images: Optional[int] = None,
-    image_ids: Optional[Tensor] = None,
-    gaussian_ids: Optional[Tensor] = None,
-    # means2d: Tensor,  # [..., N, 2] or [nnz, 2]
-    # radii: Tensor,  # [..., N, 2] or [nnz, 2]
-    # depths: Tensor,  # [..., N] or [nnz]
-    # tile_size: int,
-    # tile_width: int,
-    # tile_height: int,
     sort: bool = True,
-    # segmented: bool = False,
-    # packed: bool = False,
-    # n_images: Optional[int] = None,
-    # image_ids: Optional[Tensor] = None,
-    # gaussian_ids: Optional[Tensor] = None,
-) -> Tuple[Tensor, Tensor, Tensor]:
-    """Maps projected Gaussians to intersecting tiles.
+) -> Tuple[Tensor, Tensor, Tensor, Tensor]:
+    """Map 3D Gaussian PBFs to tiles for one camera with unpacked inputs.
 
-    Args:
-        means2d: Projected Gaussian means. [..., N, 2] if packed is False, [nnz, 2] if packed is True.
-        radii: Maximum radii of the projected Gaussians. [..., N, 2] if packed is False, [nnz, 2] if packed is True.
-        depths: Z-depth of the projected Gaussians. [..., N] if packed is False, [nnz] if packed is True.
-        tile_size: Tile size.
-        tile_width: Tile width.
-        tile_height: Tile height.
-        sort: If True, the returned intersections will be sorted by the intersection ids. Default: True.
-        segmented: If True, segmented radix sort will be used to sort the intersections. Default: False.
-        packed: If True, the input tensors are packed. Default: False.
-        n_images: Number of images. Required if packed is True.
-        image_ids: The image indices of the projected Gaussians. Required if packed is True.
-        gaussian_ids: The column indices of the projected Gaussians. Required if packed is True.
+    Supports pinhole, fisheye, and F-theta cameras. Intersections are sorted
+    by tile and camera-space range when ``sort=True``.
 
     Returns:
-        A tuple:
-
-        - **Tiles per Gaussian**. The number of tiles intersected by each Gaussian.
-          Int32 [..., N] if packed is False, Int32 [nnz] if packed is True.
-        - **Intersection ids**. Each id is an 64-bit integer with the following
-          information: image_id (Xc bits) | tile_id (Xt bits) | depth (32 bits).
-          Xc and Xt are the maximum number of bits required to represent the image and
-          tile ids, respectively. Int64 [n_isects]
-        - **Flatten ids**. The global flatten indices in [I * N] or [nnz] (packed). [n_isects]
+        - Tiles per Gaussian: Int32 [N].
+        - Intersection ids: Int64 [n_isects], encoding tile and range.
+        - Flatten ids: Int32 [n_isects], indexing the Gaussians.
+        - PBF pixel bounds: Int32 [N, 4], half-open (xmin, xmax, ymin, ymax).
     """
-    assert packed == False
-    # if packed:
-    #     nnz = means2d.size(0)
-    #     assert means2d.shape == (nnz, 2), means2d.shape
-    #     assert radii.shape == (nnz, 2), radii.shape
-    #     assert depths.shape == (nnz,), depths.shape
-    #     assert image_ids is not None, "image_ids is required if packed is True"
-    #     assert gaussian_ids is not None, "gaussian_ids is required if packed is True"
-    #     assert n_images is not None, "n_images is required if packed is True"
-    #     image_ids = image_ids.contiguous()
-    #     gaussian_ids = gaussian_ids.contiguous()
-    #     I = n_images
+    assert not packed, "GEER only supports unpacked inputs"
 
-    # else:
     image_dims = means.shape[:-2]
     I = math.prod(image_dims)
     N = means.shape[-2]
-
-    # print(f"Number of gaussians: {N}")
-    # print(f"Number of images: {I}")
-    # print(f"Image dimensions: {image_dims}")
 
     assert means.shape == image_dims + (N, 3), means.shape
     assert quats.shape == image_dims + (N, 4), quats.shape
     assert scales.shape == image_dims + (N, 3), scales.shape
     assert viewmats.shape == image_dims + (I, 4, 4), viewmats.shape
 
-    assert mirror_transformed_tan_theta is None or mirror_transformed_tan_theta.ndim == 1, mirror_transformed_tan_theta.ndim
-    assert mirror_transformed_tan_phi is None or mirror_transformed_tan_phi.ndim == 1, mirror_transformed_tan_phi.ndim
-
     assert means.dtype == torch.float32, means.dtype
     assert quats.dtype == torch.float32, quats.dtype
     assert scales.dtype == torch.float32, scales.dtype
     assert viewmats.dtype == torch.float32, viewmats.dtype
-    assert mirror_transformed_tan_theta is None or mirror_transformed_tan_theta.dtype == torch.float32, mirror_transformed_tan_theta.dtype
-    assert mirror_transformed_tan_phi is None or mirror_transformed_tan_phi.dtype == torch.float32, mirror_transformed_tan_phi.dtype
 
-    # Temporary for one camera
     assert I == 1, I
-
-    # print("All shapes for isect_tiles_geer verified")
-    # print(omni_tan_theta)
-    # print(omni_tan_phi)
-    # print(omni_tan_theta.numel())
-    # print(omni_tan_phi.numel())
-    # print(tanfovx)
-    # print(tanfovy)
-
-    # print(means[..., 5, :])
-    # print(scales[..., 5, :])
-    # print(quats[..., 5, :])
-    # print(opacities[..., 5])
 
     camera_model_type = _make_lazy_cuda_obj(
         f"CameraModelType.{camera_model.upper()}"
     )
 
-    # radial_coeffs = None
-    tiles_per_gauss, isect_ids, flatten_ids = _make_lazy_cuda_func("intersect_tile_geer")(
-        N,
-        means.contiguous(),
-        quats.contiguous(),
-        scales.contiguous(),
-        1.0, # scale_modifier
-        opacities.contiguous(),
-        viewmats[0].contiguous(),
-        camera_model_type,
-        Ks.contiguous(),
-        radial_coeffs.contiguous() if radial_coeffs is not None else radial_coeffs,
-        near_plane,
-        far_plane,
-        radius_clip,
-
-        mirror_transformed_tan_theta.contiguous() if mirror_transformed_tan_theta is not None else mirror_transformed_tan_theta,
-        mirror_transformed_tan_phi.contiguous() if mirror_transformed_tan_phi is not None else mirror_transformed_tan_phi,
-        image_width,
-        image_height,
-        tanfovx,
-        tanfovy,
-
-        tile_size,
-        tile_width,
-        tile_height,
-
-        sort,
+    tiles_per_gauss, isect_ids, flatten_ids, pbf_bounds = (
+        _make_lazy_cuda_func("intersect_tile_geer")(
+            N,
+            means.contiguous(),
+            quats.contiguous(),
+            scales.contiguous(),
+            1.0, # scale_modifier
+            opacities.contiguous(),
+            viewmats[0].contiguous(),
+            camera_model_type,
+            Ks.contiguous(),
+            radial_coeffs.contiguous() if radial_coeffs is not None else radial_coeffs,
+            tangential_coeffs.contiguous() if tangential_coeffs is not None else tangential_coeffs,
+            thin_prism_coeffs.contiguous() if thin_prism_coeffs is not None else thin_prism_coeffs,
+            ftheta_coeffs.to_cpp()
+            if ftheta_coeffs is not None
+            else FThetaCameraDistortionParameters.to_cpp_default(),
+            near_plane,
+            far_plane,
+            radius_clip,
+            image_width,
+            image_height,
+            tanfovx,
+            tanfovy,
+            tile_size,
+            tile_width,
+            tile_height,
+            sort,
+        )
     )
-    return tiles_per_gauss, isect_ids, flatten_ids
+    return tiles_per_gauss, isect_ids, flatten_ids, pbf_bounds
 
 
 @torch.no_grad()
@@ -861,6 +797,8 @@ def rasterize_to_pixels_eval3d(
     # rolling shutter
     rolling_shutter: RollingShutterType = RollingShutterType.GLOBAL,
     viewmats_rs: Optional[Tensor] = None,  # [..., C, 4, 4]
+    pbf_bounds: Optional[Tensor] = None,  # [..., C, N, 4], GEER only
+    geer_gradient: Optional[Tensor] = None,  # [..., C, N, 3], autograd-only
 ) -> Tuple[Tensor, Tensor]:
     """Rasterizes Gaussians to pixels.
 
@@ -922,6 +860,14 @@ def rasterize_to_pixels_eval3d(
     if viewmats_rs is not None:
         assert viewmats_rs.shape == batch_dims + (C, 4, 4), viewmats_rs.shape
         viewmats_rs = viewmats_rs.contiguous()
+
+    if pbf_bounds is not None:
+        assert pbf_bounds.shape == batch_dims + (C, N, 4), pbf_bounds.shape
+        assert pbf_bounds.dtype == torch.int32, pbf_bounds.dtype
+        pbf_bounds = pbf_bounds.contiguous()
+
+    if geer_gradient is not None:
+        assert geer_gradient.shape == batch_dims + (C, N, 3), geer_gradient.shape
 
     # Pad the channels to the nearest supported number if necessary
     channels = colors.shape[-1]
@@ -1003,6 +949,8 @@ def rasterize_to_pixels_eval3d(
         # rolling shutter
         rolling_shutter,
         viewmats_rs.contiguous() if viewmats_rs is not None else None,
+        pbf_bounds,
+        geer_gradient,
     )
 
     if padded_channels > 0:
@@ -1639,6 +1587,8 @@ class _RasterizeToPixelsEval3D(torch.autograd.Function):
         # rolling shutter
         rolling_shutter: RollingShutterType = RollingShutterType.GLOBAL,
         viewmats_rs: Optional[Tensor] = None,  # [..., C, 4, 4]
+        pbf_bounds: Optional[Tensor] = None,  # [..., C, N, 4], GEER only
+        geer_gradient: Optional[Tensor] = None,  # [..., C, N, 3], autograd-only
     ) -> Tuple[Tensor, Tensor]:
         ut_params = ut_params.to_cpp()
         rs_type = rolling_shutter.to_cpp()
@@ -1676,6 +1626,7 @@ class _RasterizeToPixelsEval3D(torch.autograd.Function):
             ftheta_coeffs,
             isect_offsets,
             flatten_ids,
+            pbf_bounds,
         )
 
         ctx.save_for_backward(
@@ -1694,6 +1645,8 @@ class _RasterizeToPixelsEval3D(torch.autograd.Function):
             thin_prism_coeffs,
             isect_offsets,
             flatten_ids,
+            pbf_bounds,
+            geer_gradient,
             render_alphas,
             last_ids,
         )
@@ -1729,6 +1682,8 @@ class _RasterizeToPixelsEval3D(torch.autograd.Function):
             thin_prism_coeffs,
             isect_offsets,
             flatten_ids,
+            pbf_bounds,
+            geer_gradient,
             render_alphas,
             last_ids,
         ) = ctx.saved_tensors
@@ -1739,6 +1694,9 @@ class _RasterizeToPixelsEval3D(torch.autograd.Function):
         camera_model_type = ctx.camera_model_type
         tile_size = ctx.tile_size
         ftheta_coeffs = ctx.ftheta_coeffs
+        v_geer_gradient = (
+            torch.zeros_like(geer_gradient) if geer_gradient is not None else None
+        )
 
         (v_means, v_quats, v_scales, v_colors, v_opacities,) = _make_lazy_cuda_func(
             "rasterize_to_pixels_from_world_3dgs_bwd"
@@ -1765,10 +1723,12 @@ class _RasterizeToPixelsEval3D(torch.autograd.Function):
             ftheta_coeffs,
             isect_offsets,
             flatten_ids,
+            pbf_bounds,
             render_alphas,
             last_ids,
             v_render_colors.contiguous(),
             v_render_alphas.contiguous(),
+            v_geer_gradient,
         )
 
         if ctx.needs_input_grad[5]:  # backgrounds
@@ -1788,23 +1748,24 @@ class _RasterizeToPixelsEval3D(torch.autograd.Function):
             v_colors,
             v_opacities,
             v_backgrounds,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
+            None,  # masks
+            None,  # viewmats
+            None,  # Ks
+            None,  # width
+            None,  # height
+            None,  # tile_size
+            None,  # isect_offsets
+            None,  # flatten_ids
+            None,  # camera_model
+            None,  # ut_params
+            None,  # radial_coeffs
+            None,  # tangential_coeffs
+            None,  # thin_prism_coeffs
+            None,  # ftheta_coeffs
+            None,  # rolling_shutter
+            None,  # viewmats_rs
+            None,  # pbf_bounds
+            v_geer_gradient,
         )
 
 

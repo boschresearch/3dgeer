@@ -224,7 +224,8 @@ at::Tensor intersect_offset(
     const uint32_t tile_height
 );
 
-std::tuple<at::Tensor, at::Tensor, at::Tensor> intersect_tile_geer(
+std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor>
+intersect_tile_geer(
     const int P, // N, num_gaussians
 
     const at::Tensor means,                // [N, 3]
@@ -236,28 +237,19 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> intersect_tile_geer(
     const CameraModelType camera_model,
     const at::Tensor Ks, // [C, 3, 3]
     const at::optional<at::Tensor> radial_coeffs, // [C, 4] or [C, 6]
+    const at::optional<at::Tensor> tangential_coeffs, // [C, 2]
+    const at::optional<at::Tensor> thin_prism_coeffs, // [C, 4]
+    const FThetaCameraDistortionParameters ftheta_coeffs,
     const float near_plane,
 	const float far_plane,
     const float radius_clip,
 
-    const at::optional<at::Tensor> mirror_transformed_tan_theta, // tan_theta of mirror transformed PBF
-    const at::optional<at::Tensor> mirror_transformed_tan_phi, // tan_phi of mirror transformed PBF
-    const int W, // length of tan_theta
-    const int H, // length of tan_phi
+    const int W,
+    const int H,
     const float tan_fovx, float tan_fovy, // tan of fovx and fovy
 
     const int tile_size, const int tile_width, const int tile_height,
-    // const at::Tensor means2d,                    // [..., N, 2] or [nnz, 2]
-    // const at::Tensor radii,                      // [..., N, 2] or [nnz, 2]
-    // const at::Tensor depths,                     // [..., N] or [nnz]
-    // const at::optional<at::Tensor> image_ids,    // [nnz]
-    // const at::optional<at::Tensor> gaussian_ids, // [nnz]
-    // const uint32_t I,
-    // const uint32_t tile_size,
-    // const uint32_t tile_width,
-    // const uint32_t tile_height,
     const bool sort
-    // const bool segmented
 );
 
 // Compute Covariance and Precision Matrices from Quaternion and Scale
@@ -550,41 +542,6 @@ projection_ut_3dgs_fused(
     const FThetaCameraDistortionParameters ftheta_coeffs // shared parameters for all cameras
 );
 
-// Use 3dgeer to project 3D gaussians to 2D. (none differentiable)
-// https://openreview.net/pdf?id=4voMNlRWI7
-std::tuple<
-    at::Tensor,
-    at::Tensor,
-    at::Tensor,
-    at::Tensor,
-    at::Tensor>
-projection_geer_3dgs_fused(
-    const at::Tensor means,                   // [..., N, 3]
-    const at::Tensor quats,                   // [..., N, 4]
-    const at::Tensor scales,                  // [..., N, 3]
-    const at::optional<at::Tensor> opacities, // [..., N] optional
-    const at::Tensor viewmats0,               // [..., C, 4, 4]
-    const at::optional<at::Tensor>
-        viewmats1,                            // [..., C, 4, 4] optional for rolling shutter
-    const at::Tensor Ks,                      // [..., C, 3, 3]
-    const uint32_t image_width,
-    const uint32_t image_height,
-    const float eps2d,
-    const float near_plane,
-    const float far_plane,
-    const float radius_clip,
-    const bool calc_compensations,
-    const CameraModelType camera_model,
-    // uncented transform
-    const UnscentedTransformParameters ut_params,
-    ShutterType rs_type,
-    const at::optional<at::Tensor> radial_coeffs,     // [..., C, 6] or [..., C, 4] optional
-    const at::optional<at::Tensor> tangential_coeffs, // [..., C, 2] optional
-    const at::optional<at::Tensor> thin_prism_coeffs,  // [..., C, 4] optional
-    const FThetaCameraDistortionParameters ftheta_coeffs // shared parameters for all cameras
-);
-
-
 std::tuple<at::Tensor, at::Tensor, at::Tensor>
 rasterize_to_pixels_from_world_3dgs_fwd(
     // Gaussian parameters
@@ -614,7 +571,8 @@ rasterize_to_pixels_from_world_3dgs_fwd(
     const FThetaCameraDistortionParameters ftheta_coeffs, // shared parameters for all cameras
     // intersections
     const at::Tensor tile_offsets, // [..., C, tile_height, tile_width]
-    const at::Tensor flatten_ids   // [n_isects]
+    const at::Tensor flatten_ids,  // [n_isects]
+    const at::optional<at::Tensor> pbf_bounds // [..., C, N, 4], optional
 );
 
 std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor, at::Tensor>
@@ -647,12 +605,14 @@ rasterize_to_pixels_from_world_3dgs_bwd(
     // intersections
     const at::Tensor tile_offsets,    // [..., C, tile_height, tile_width]
     const at::Tensor flatten_ids,     // [n_isects]
+    const at::optional<at::Tensor> pbf_bounds, // [..., C, N, 4], optional
     // forward outputs
     const at::Tensor render_alphas,   // [..., C, image_height, image_width, 1]
     const at::Tensor last_ids,        // [..., C, image_height, image_width]
     // gradients of outputs
     const at::Tensor v_render_colors, // [..., C, image_height, image_width, 3]
-    const at::Tensor v_render_alphas  // [..., C, image_height, image_width, 1]
+    const at::Tensor v_render_alphas, // [..., C, image_height, image_width, 1]
+    const at::optional<at::Tensor> v_geer_gradient // [..., C, N, 3], optional output
 );
 
 } // namespace gsplat

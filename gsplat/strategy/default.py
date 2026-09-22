@@ -249,7 +249,10 @@ class DefaultStrategy(Strategy):
         assert (
             self.key_for_gradient in info
         ), "The 2D means of the Gaussians is required but missing."
-        key_tensor = info[self.key_for_gradient]
+        geer_gradient = info.get("geer_gradient")
+        key_tensor = (
+            geer_gradient if geer_gradient is not None else info[self.key_for_gradient]
+        )
         if not getattr(key_tensor, "requires_grad", False):
             # Some projection / rendering modes intentionally return non-differentiable
             # metadata tensors (e.g. UT projection). In that case, densification based
@@ -347,8 +350,12 @@ class DefaultStrategy(Strategy):
         ]:
             assert key in info, f"{key} is required but missing."
 
-        key_tensor = info[self.key_for_gradient]
-        if self.absgrad:
+        geer_gradient = info.get("geer_gradient")
+        using_geer_gradient = geer_gradient is not None
+        key_tensor = (
+            geer_gradient if using_geer_gradient else info[self.key_for_gradient]
+        )
+        if self.absgrad and not using_geer_gradient:
             grads_src = getattr(key_tensor, "absgrad", None)
         else:
             grads_src = getattr(key_tensor, "grad", None)
@@ -359,10 +366,13 @@ class DefaultStrategy(Strategy):
         if grads_src is None:
             return False
 
-        # normalize grads to [-1, 1] screen space
+        # Standard projected-mean gradients are normalized to [-1, 1] screen
+        # space. The GEER proxy already includes the depth-dependent scaling
+        # from the original rasterizer and must not be scaled a second time.
         grads = grads_src.clone()
-        grads[..., 0] *= info["width"] / 2.0 * info["n_cameras"]
-        grads[..., 1] *= info["height"] / 2.0 * info["n_cameras"]
+        if not using_geer_gradient:
+            grads[..., 0] *= info["width"] / 2.0 * info["n_cameras"]
+            grads[..., 1] *= info["height"] / 2.0 * info["n_cameras"]
 
         # initialize state on the first run
         n_gaussian = len(list(params.values())[0])

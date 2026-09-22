@@ -226,6 +226,7 @@ void launch_rasterize_to_pixels_from_world_3dgs_fwd_kernel(
     // intersections
     const at::Tensor tile_offsets, // [..., C, tile_height, tile_width]
     const at::Tensor flatten_ids,  // [n_isects]
+    const at::optional<at::Tensor> pbf_bounds, // [..., C, N, 4], optional
     // outputs
     at::Tensor renders, // [..., C, image_height, image_width, channels]
     at::Tensor alphas,  // [..., C, image_height, image_width]
@@ -262,6 +263,7 @@ void launch_rasterize_to_pixels_from_world_3dgs_bwd_kernel(
     // intersections
     const at::Tensor tile_offsets, // [..., C, tile_height, tile_width]
     const at::Tensor flatten_ids,  // [n_isects]
+    const at::optional<at::Tensor> pbf_bounds, // [..., C, N, 4], optional
     // forward outputs
     const at::Tensor render_alphas, // [..., C, image_height, image_width, 1]
     const at::Tensor last_ids,      // [..., C, image_height, image_width]
@@ -273,7 +275,8 @@ void launch_rasterize_to_pixels_from_world_3dgs_bwd_kernel(
     at::Tensor v_quats,      // [..., N, 4]
     at::Tensor v_scales,     // [..., N, 3]
     at::Tensor v_colors,     // [..., C, N, 3] or [nnz, 3]
-    at::Tensor v_opacities   // [..., C, N] or [nnz]
+    at::Tensor v_opacities,  // [..., C, N] or [nnz]
+    const at::optional<at::Tensor> v_geer_gradient // [..., C, N, 3], optional
 ) ;
 
 } // namespace gsplat

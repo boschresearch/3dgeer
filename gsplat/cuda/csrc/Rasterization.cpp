@@ -719,7 +719,8 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> rasterize_to_pixels_from_world_3d
     const FThetaCameraDistortionParameters ftheta_coeffs, // shared parameters for all cameras
     // intersections
     const at::Tensor tile_offsets, // [..., C, tile_height, tile_width]
-    const at::Tensor flatten_ids   // [n_isects]
+    const at::Tensor flatten_ids,  // [n_isects]
+    const at::optional<at::Tensor> pbf_bounds // [..., C, N, 4], optional
 ) {
     DEVICE_GUARD(means);
     CHECK_INPUT(means);
@@ -729,6 +730,9 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> rasterize_to_pixels_from_world_3d
     CHECK_INPUT(opacities);
     CHECK_INPUT(tile_offsets);
     CHECK_INPUT(flatten_ids);
+    if (pbf_bounds.has_value()) {
+        CHECK_INPUT(pbf_bounds.value());
+    }
     if (backgrounds.has_value()) {
         CHECK_INPUT(backgrounds.value());
     }
@@ -788,6 +792,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> rasterize_to_pixels_from_world_3d
             fisheye_max_angles,                                                \
             tile_offsets,                                                      \
             flatten_ids,                                                       \
+            pbf_bounds,                                                        \
             renders,                                                           \
             alphas,                                                            \
             last_ids                                                           \
@@ -855,12 +860,14 @@ rasterize_to_pixels_from_world_3dgs_bwd(
     // intersections
     const at::Tensor tile_offsets, // [..., C, tile_height, tile_width]
     const at::Tensor flatten_ids,  // [n_isects]
+    const at::optional<at::Tensor> pbf_bounds, // [..., C, N, 4], optional
     // forward outputs
     const at::Tensor render_alphas, // [..., C, image_height, image_width, 1]
     const at::Tensor last_ids,      // [..., C, image_height, image_width]
     // gradients of outputs
     const at::Tensor v_render_colors, // [..., C, image_height, image_width, 3]
-    const at::Tensor v_render_alphas // [..., C, image_height, image_width, 1]
+    const at::Tensor v_render_alphas, // [..., C, image_height, image_width, 1]
+    const at::optional<at::Tensor> v_geer_gradient // [..., C, N, 3], optional output
 ) {
     DEVICE_GUARD(means);
     CHECK_INPUT(means);
@@ -874,6 +881,12 @@ rasterize_to_pixels_from_world_3dgs_bwd(
     CHECK_INPUT(last_ids);
     CHECK_INPUT(v_render_colors);
     CHECK_INPUT(v_render_alphas);
+    if (pbf_bounds.has_value()) {
+        CHECK_INPUT(pbf_bounds.value());
+    }
+    if (v_geer_gradient.has_value()) {
+        CHECK_INPUT(v_geer_gradient.value());
+    }
     if (backgrounds.has_value()) {
         CHECK_INPUT(backgrounds.value());
     }
@@ -922,6 +935,7 @@ rasterize_to_pixels_from_world_3dgs_bwd(
             fisheye_max_angles,                                                \
             tile_offsets,                                                      \
             flatten_ids,                                                       \
+            pbf_bounds,                                                        \
             render_alphas,                                                     \
             last_ids,                                                          \
             v_render_colors,                                                   \
@@ -930,7 +944,8 @@ rasterize_to_pixels_from_world_3dgs_bwd(
             v_quats,                                                           \
             v_scales,                                                          \
             v_colors,                                                          \
-            v_opacities                                                        \
+            v_opacities,                                                       \
+            v_geer_gradient                                                    \
         );                                                                     \
         break;
 

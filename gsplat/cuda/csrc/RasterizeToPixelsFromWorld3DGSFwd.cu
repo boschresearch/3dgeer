@@ -51,6 +51,7 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
     // intersections
     const int32_t *__restrict__ tile_offsets, // [B, C, tile_height, tile_width]
     const int32_t *__restrict__ flatten_ids,  // [n_isects]
+    const int32_t *__restrict__ pbf_bounds,   // [B, C, N, 4], optional
     scalar_t
         *__restrict__ render_colors,      // [B, C, image_height, image_width, CDIM]
     scalar_t *__restrict__ render_alphas, // [B, C, image_height, image_width, 1]
@@ -127,14 +128,6 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
         cm_params.focal_length = { focal_length.x, focal_length.y };
         if (radial_coeffs != nullptr) {
             cm_params.radial_coeffs = make_array<float, 4>(radial_coeffs + iid * 4);
-            // printf("raw radial_coeffs ptr values: %f %f %f %f\n",
-            //     radial_coeffs[iid * 4 + 0],
-            //     radial_coeffs[iid * 4 + 1],
-            //     radial_coeffs[iid * 4 + 2],
-            //     radial_coeffs[iid * 4 + 3]
-            // );
-        } else {
-
         }
         assert(fisheye_max_angles != nullptr);
         OpenCVFisheyeCameraModel camera_model(
@@ -221,7 +214,6 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
             // TODO: only support 1 camera for now so it is ok to abuse the index.
             int32_t isect_id = flatten_ids[idx]; // flatten index in [B * C * N] or [nnz]
             int32_t isect_bid = isect_id / (C * N);   // intersection batch index
-            // int32_t isect_cid = (isect_id / N) % C;   // intersection camera index
             int32_t isect_gid = isect_id % N;         // intersection gaussian index
             id_batch[tr] = isect_id;
             const vec3 xyz = means[isect_bid * N + isect_gid];
@@ -253,6 +245,14 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
         // process gaussians in the current batch for this pixel
         uint32_t batch_size = min(block_size, range_end - batch_start);
         for (uint32_t t = 0; (t < batch_size) && !done; ++t) {
+            if (pbf_bounds != nullptr) {
+                const int32_t isect_id = id_batch[t];
+                const int32_t *bounds = pbf_bounds + 4 * isect_id;
+                if (j < bounds[0] || j >= bounds[1] ||
+                    i < bounds[2] || i >= bounds[3]) {
+                    continue;
+                }
+            }
             const vec4 xyz_opac = xyz_opacity_batch[t];
             const float opac = xyz_opac[3];
             const vec3 xyz = {xyz_opac[0], xyz_opac[1], xyz_opac[2]};            
@@ -264,7 +264,7 @@ __global__ void rasterize_to_pixels_from_world_3dgs_fwd_kernel(
             const float grayDist = glm::dot(gcrod, gcrod);
             const float power = -0.5f * grayDist;
 
-            float alpha = min(0.999f, opac * __expf(power));
+            float alpha = min(0.99f, opac * __expf(power));
             if (alpha < 1.f / 255.f) {
                 continue;
             }
@@ -336,6 +336,7 @@ void launch_rasterize_to_pixels_from_world_3dgs_fwd_kernel(
     // intersections
     const at::Tensor tile_offsets, // [..., C, tile_height, tile_width]
     const at::Tensor flatten_ids,  // [n_isects]
+    const at::optional<at::Tensor> pbf_bounds, // [..., C, N, 4], optional
     // outputs
     at::Tensor renders, // [..., C, image_height, image_width, channels]
     at::Tensor alphas,  // [..., C, image_height, image_width]
@@ -421,6 +422,9 @@ void launch_rasterize_to_pixels_from_world_3dgs_fwd_kernel(
             // intersections
             tile_offsets.data_ptr<int32_t>(),
             flatten_ids.data_ptr<int32_t>(),
+            pbf_bounds.has_value()
+                ? pbf_bounds.value().data_ptr<int32_t>()
+                : nullptr,
             renders.data_ptr<float>(),
             alphas.data_ptr<float>(),
             last_ids.data_ptr<int32_t>()
@@ -455,6 +459,7 @@ void launch_rasterize_to_pixels_from_world_3dgs_fwd_kernel(
         const at::Tensor fisheye_max_angles,                                  \
         const at::Tensor tile_offsets,                                         \
         const at::Tensor flatten_ids,                                          \
+        const at::optional<at::Tensor> pbf_bounds,                            \
         const at::Tensor renders,                                              \
         const at::Tensor alphas,                                               \
         const at::Tensor last_ids                                               \

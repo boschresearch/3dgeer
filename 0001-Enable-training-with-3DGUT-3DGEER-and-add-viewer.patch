@@ -1,33 +1,297 @@
-From e4adebf3a8644a68335472c929a36b68ee55700d Mon Sep 17 00:00:00 2001
+From 7d69246adf934ade0dde38d863748b3d04115bbf Mon Sep 17 00:00:00 2001
 From: Edward Lee <edwardneo@gmail.com>
-Date: Fri, 17 Apr 2026 01:02:30 -0700
-Subject: [PATCH] Enable training with 3DGUT/3DGEER and add viewer
+Date: Fri, 18 Sep 2026 19:04:36 -0700
+Subject: [PATCH] Add UT/GEER training, viewer, and native PhysicalAI camera
+ support
 
+Combine the DriveStudio integration with PhysicalAI preprocessing, native
+FTheta training, fisheye/FTheta rendering, and rolling-shutter support.
 ---
- configs/omnire_geer.yaml                     |  279 ++
- datasets/argoverse/argoverse_sourceloader.py |    1 +
- datasets/base/pixel_source.py                |   17 +-
- datasets/driving_dataset.py                  |   18 +-
- datasets/kitti/kitti_sourceloader.py         |    1 +
- datasets/nuplan/nuplan_sourceloader.py       |    1 +
- datasets/nuscenes/nuscenes_sourceloader.py   |    1 +
- datasets/pandaset/pandaset_sourceloader.py   |    1 +
- datasets/waymo/waymo_sourceloader.py         |    1 +
- models/gaussians/basics.py                   |   36 +-
- models/trainers/base.py                      |   73 +-
- models/trainers/scene_graph.py               |    8 +-
- models/trainers/single.py                    |    2 +-
- models/video_utils.py                        |  124 +-
- requirements.txt                             |    5 +-
- tools/eval.py                                |   74 +-
- tools/viewer.py                              | 2448 ++++++++++++++++++
- 17 files changed, 3012 insertions(+), 78 deletions(-)
+ .gitignore                                    |    1 +
+ README.md                                     |    6 +-
+ configs/3dgeer.md                             |   78 +
+ configs/datasets/physicalai/7cams.yaml        |   41 +
+ configs/datasets/physicalai/7cams_native.yaml |   41 +
+ configs/omnire_geer.yaml                      |  279 ++
+ datasets/argoverse/argoverse_sourceloader.py  |    1 +
+ datasets/base/pixel_source.py                 |  195 +-
+ datasets/dataset_meta.py                      |   37 +
+ datasets/driving_dataset.py                   |  105 +-
+ datasets/kitti/kitti_sourceloader.py          |    1 +
+ datasets/nuplan/nuplan_sourceloader.py        |    1 +
+ datasets/nuscenes/nuscenes_sourceloader.py    |    1 +
+ datasets/pandaset/pandaset_sourceloader.py    |    1 +
+ datasets/physicalai/physicalai_human_utils.py |  134 +
+ datasets/physicalai/physicalai_preprocess.py  |  440 +++
+ .../physicalai/physicalai_sourceloader.py     |  510 ++++
+ datasets/preprocess.py                        |   17 +-
+ datasets/tools/extract_masks.py               |    2 +-
+ datasets/tools/humanpose_process.py           |    8 +-
+ datasets/waymo/waymo_preprocess.py            |   16 +-
+ datasets/waymo/waymo_sourceloader.py          |  191 +-
+ datasets/waymo/waymo_utils.py                 |   84 +-
+ docs/PhysicalAI.md                            |  201 ++
+ docs/Waymo.md                                 |    9 +-
+ models/gaussians/basics.py                    |   43 +-
+ models/trainers/base.py                       |  207 +-
+ models/trainers/scene_graph.py                |    8 +-
+ models/trainers/single.py                     |    2 +-
+ models/video_utils.py                         |  165 +-
+ requirements.txt                              |    5 +-
+ third_party/Humans4D                          |    2 +-
+ tools/eval.py                                 |  132 +-
+ tools/viewer.py                               | 2523 +++++++++++++++++
+ utils/geometry.py                             |  261 +-
+ utils/visualization.py                        |   65 +
+ 36 files changed, 5601 insertions(+), 212 deletions(-)
+ create mode 100644 configs/3dgeer.md
+ create mode 100644 configs/datasets/physicalai/7cams.yaml
+ create mode 100644 configs/datasets/physicalai/7cams_native.yaml
  create mode 100644 configs/omnire_geer.yaml
+ create mode 100644 datasets/physicalai/physicalai_human_utils.py
+ create mode 100644 datasets/physicalai/physicalai_preprocess.py
+ create mode 100644 datasets/physicalai/physicalai_sourceloader.py
+ create mode 100644 docs/PhysicalAI.md
  create mode 100644 tools/viewer.py
 
+diff --git a/.gitignore b/.gitignore
+index a710363ea3be80fcae11724b1761369282b7d4db..b8ffd69cc1a0abe8296aae020e6a6bf8f8966da3 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -13,6 +13,7 @@ data/argoverse
+ data/nuscenes
+ data/kitti
+ data/nuplan
++data/physicalai
+ vscode_debugs
+ debug/
+ .vscode
+diff --git a/README.md b/README.md
+index e0b49770712366e36201d34ca9917b03941396ee..4626793ba81512743be8359d7daf0ed11cbdba71 100644
+--- a/README.md
++++ b/README.md
+@@ -24,7 +24,7 @@ A 3DGS framework for omni urban scene reconstruction and simulation!
+ </p>
+ 
+ ## About
+-DriveStudio is a 3DGS codebase for urban scene reconstruction/simulation. It offers a system with multiple Gaussian representations to jointly reconstruct backgrounds, vehicles, and non-rigid categories (pedestrians, cyclists, etc.) from driving logs. DriveStudio also provides a unified data system supporting various popular driving datasets, including [Waymo](https://waymo.com/open/), [PandaSet](https://pandaset.org/), [Argoverse2](https://www.argoverse.org/av2.html), [KITTI](http://www.cvlibs.net/datasets/kitti/), [NuScenes](https://www.nuscenes.org/), and [NuPlan](https://www.nuscenes.org/nuplan).
++DriveStudio is a 3DGS codebase for urban scene reconstruction/simulation. It offers a system with multiple Gaussian representations to jointly reconstruct backgrounds, vehicles, and non-rigid categories (pedestrians, cyclists, etc.) from driving logs. DriveStudio also provides a unified data system supporting various popular driving datasets, including [Waymo](https://waymo.com/open/), [PandaSet](https://pandaset.org/), [Argoverse2](https://www.argoverse.org/av2.html), [KITTI](http://www.cvlibs.net/datasets/kitti/), [NuScenes](https://www.nuscenes.org/), [NuPlan](https://www.nuscenes.org/nuplan), and [PhysicalAI NCore](docs/PhysicalAI.md).
+ 
+ This codebase also contains the **official implementation** of:
+   > **OmniRe: Omni Urban Scene Reconstruction** <br> ICLR 2025 (Spotlight) <br> [Project Page](https://ziyc.github.io/omnire/) | [Paper](https://arxiv.org/abs/2408.16760) <br> [Ziyu Chen](https://ziyc.github.io/), [Jiawei Yang](https://jiawei-yang.github.io/), [Jiahui Huang](https://huangjh-pub.github.io/), [Riccardo de Lutio](https://riccardodelutio.github.io/), [Janick Martinez Esturo](https://www.jme.pub/), [Boris Ivanovic](https://www.borisivanovic.com/), [Or Litany](https://orlitany.github.io/), [Zan Gojcic](https://zgojcic.github.io/), [Sanja Fidler](https://www.cs.utoronto.ca/~fidler/), [Marco Pavone](https://stanford.edu/~pavone/), [Li Song](https://medialab.sjtu.edu.cn/author/li-song/), [Yue Wang](https://yuewang.xyz/)
+@@ -52,6 +52,7 @@ Our codebase supports two types of Gaussian trainers:
+ | [Deformable-GS](https://github.com/ingra14m/Deformable-3D-Gaussians) | Unofficial | Single | • Deformable Gaussians: Entire scene |
+ | [PVG](https://github.com/fudan-zvg/PVG) | Unofficial | Single | • Periodic Vibration Gaussians: Entire scene |
+ | [Street Gaussians](https://github.com/zju3dv/street_gaussians) | Unofficial | Multi | • Static Gaussians: Background, Vehicles |
++| [3DGEER](https://github.com/boschresearch/3dgeer) | Unofficial | Single/Multi | • Ray-Based Gaussians: Can be integrated with any other representation (see [here](./configs/3dgeer.md) for details) |
+ 
+ We extend our gratitude to the authors for their remarkable contributions. If you find these works useful, please consider citing them.
+ 
+@@ -66,6 +67,7 @@ This codebase provides support for popular driving datasets. We offer instructio
+ | ArgoVerse | [Data Process Instruction](docs/ArgoVerse.md) | 7 cameras | 10Hz | ✅ |
+ | PandaSet | [Data Process Instruction](docs/Pandaset.md) | 6 cameras | 10Hz | ✅ |
+ | KITTI | [Data Process Instruction](docs/KITTI.md) | 2 cameras | 10Hz | ✅ |
++| PhysicalAI NCore | [Data Process Instruction](docs/PhysicalAI.md) | 7 cameras | ~10Hz (processed) | ✅ |
+ 
+ *NOTE: For NuScenes data, LiDAR operates at 20Hz and cameras at 12Hz, but keyframes (with object annotations) are only at 2Hz. We provide a method to interpolate annotations up to 10Hz.
+ 
+@@ -129,6 +131,7 @@ We support most popular public driving datasets. Detailed instructions for downl
+ - ArgoVerse: [Data Process Instruction](docs/ArgoVerse.md)
+ - PandaSet: [Data Process Instruction](docs/Pandaset.md)
+ - KITTI: [Data Process Instruction](docs/KITTI.md)
++- PhysicalAI NCore: [Data Process Instruction](docs/PhysicalAI.md)
+ 
+ ## 🚀 Running
+ ### Training
+@@ -152,6 +155,7 @@ python tools/train.py \
+ - Specify dataset and number of cameras by setting `dataset`. Examples: `waymo/1cams`, `waymo/5cams`, `pandaset/6cams`, `argoverse/7cams`, etc.
+   You can set up arbitrary camera combinations for each dataset. See `configs/datasets/` for custom configuration details.
+ - For over 3 cameras or 450+ images, we recommend using `omnire_extended_cam.yaml`. It works better in practice.
++- For PhysicalAI, use `dataset=physicalai/7cams`. Native FTheta training uses GEER or UT with `data.pixel_source.undistort: False` in the dataset config; set it to `True` for pinhole rectification. See the [3DGEER guide](configs/3dgeer.md) for setup.
+ ### Evaluation
+ ```shell
+ python tools/eval.py --resume_from $ckpt_path
+diff --git a/configs/3dgeer.md b/configs/3dgeer.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..1a4cd9e43c185cc029742cc42b1b3885c04a583f
+--- /dev/null
++++ b/configs/3dgeer.md
+@@ -0,0 +1,78 @@
++# Exact and Efficient Fisheye Rendering (3DGEER)
++
++<p align="center">
++  <img src="https://github.com/user-attachments/assets/8957f2c7-9888-4cd5-b226-b7aee0cb3ecb" width="80%" style="max-width: 80%; height: auto;" />
++</p>
++
++To use 3DGEER with any method:
++
++1. Install the `gsplat-geer` package.
++
++    ```bash
++    git clone --branch gsplat-geer https://github.com/boschresearch/3dgeer.git ./third_party/3dgeer
++    cd ./third_party/3dgeer
++
++    pip uninstall gsplat
++    pip install -e . --no-build-isolation
++    cd ../..
++    ```
++
++2. In the method's config `.yaml` file, under `trainer.render`, add:
++
++    ```yaml
++    render_mode: geer # one of default | geer | ut
++    ```
++
++    Remove `CamPose` from `model`.
++
++    To train on native distorted images, set the following in the dataset config:
++
++    ```yaml
++    data:
++      pixel_source:
++        undistort: False # set True to rectify images to pinhole geometry when loading
++    ```
++
++    Native training uses the dataset's camera calibration and requires UT or GEER with support for that camera model.
++
++    For [Waymo](../docs/Waymo.md) and [PhysicalAI](../docs/PhysicalAI.md), native training and recorded-camera evaluation use exposure-start/end poses to model rolling shutter. Keep `CamPose` and `CamPosePerturb` disabled. Viewer and novel-view renders use a global shutter.
++
++    To render a fisheye novel-view video, configure `render.render_novel` in the method config:
++
++    ```yaml
++    render_novel:
++      camera_model: fisheye
++      render_mode: geer # one of geer | ut
++      traj_types:
++        - front_center_interp
++      fov: 180.0 # degrees
++      radial_coeffs: [0.0, 0.0, 0.0, 0.0]
++      fps: 24
++    ```
++
++    To save a separate FTheta novel-view video, add the following under `render`:
++
++    ```yaml
++    render_ftheta:
++      render_mode: geer # one of geer | ut
++      traj_types:
++        - front_center_interp
++      camera_id: 0 # dataset camera supplying FTheta calibration
++      fps: 24
++    ```
++
++    This writes `novel_ftheta_<step>/<trajectory>.mp4` under `videos/` after training or `videos_eval/` during evaluation. Optional `frames`, `height`, and `width` control the video length and resolution. Use `ftheta_parameters` for a calibration JSON path or mapping instead of the source camera's calibration; omit `fov` and `radial_coeffs`. Set `render_ftheta: null` or `False` to disable it. Unspecified trajectory, frame count, and FPS settings inherit from `render_novel` when available.
++
++    An example OmniRe + 3DGEER config can be found [here](./omnire_geer.yaml).
++
++3. Train and evaluate the model according to the [README](../README.md#training).
++
++4. Open the interactive viewer:
++
++    ```shell
++    python tools/viewer.py --ckpt $ckpt_path --port 8080
++    ```
++
++    Open `http://localhost:8080` to scrub scene time, toggle Gaussian groups, switch between pinhole, fisheye and calibrated FTheta cameras, and export camera-path videos.
++
++Note: GEER training requires `gsplat-geer` to return `info["geer_gradient"]` for densification. Its gradient scale differs from default 3DGS and 3DGUT, so their densification thresholds are not interchangeable.
+diff --git a/configs/datasets/physicalai/7cams.yaml b/configs/datasets/physicalai/7cams.yaml
+new file mode 100644
+index 0000000000000000000000000000000000000000..78c64570edba002b3784c9f935c2346cc052e3d3
+--- /dev/null
++++ b/configs/datasets/physicalai/7cams.yaml
+@@ -0,0 +1,41 @@
++# PhysicalAI dataset configuration
++# Processed cameras:
++#   idx    camera       nominal FOV
++#    0    front_wide     120 degrees
++#    1    front_tele      30 degrees
++#    2    cross_left     120 degrees
++#    3    cross_right    120 degrees
++#    4    rear_left       70 degrees
++#    5    rear_right      70 degrees
++#    6    rear_tele       30 degrees
++# Original image sizes are read from each processed scene's metadata.json.
++# NCore V4 images retain their native projection.
++# Set undistort below to False for native training or True for rectification.
++
++data:
++  data_root: data/physicalai/processed # data root for the dataset
++  dataset: physicalai # dataset type
++  scene_idx: 0 # which scene to use
++  start_timestep: 0 # which timestep to start from
++  end_timestep: -1 # which timestep to end at, -1 means the last timestep
++  preload_device: cpu # choose from ["cpu", "cuda"], cache the data on this device
++  pixel_source: # image source and object annotations
++    type: datasets.physicalai.physicalai_sourceloader.PhysicalAIPixelSource
++    cameras: [0, 1, 2, 3, 4, 5, 6] # which cameras to use
++    downscale_when_loading: [2, 2, 2, 2, 2, 2, 2] # the size of the images to load
++    downscale: 1 # downscale factor wrt to the downscale_when_loading
++    undistort: True # whether to undistort the images
++    test_image_stride: 5 # use every Nth timestep for the test set. if 0, use all images for training and none for testing
++    load_sky_mask: True # whether to load sky mask
++    load_dynamic_mask: True # whether to load dynamic mask
++    load_objects: True # whether to load object bounding boxes
++    load_smpl: False # whether to load SMPL template for pedestrians; enable after the optional humanpose stage
++    sampler: # error based image sampler
++      buffer_downscale: 4 # downscale factor for the buffer wrt load_size
++      buffer_ratio: 0.0 # the percentage of images sampled according to the error buffer
++      start_enhance_weight: 1 # give more chance to sample starting frames, which usually have more errors
++  lidar_source: # everything related to "lidar" --- from lidar points
++    type: datasets.physicalai.physicalai_sourceloader.PhysicalAILiDARSource
++    load_lidar: True # whether to load lidar
++    lidar_downsample_factor: 4 # downsample lidar by this factor to compute percentile
++    lidar_percentile: 0.02 # percentile to compute aabb from lidar
+diff --git a/configs/datasets/physicalai/7cams_native.yaml b/configs/datasets/physicalai/7cams_native.yaml
+new file mode 100644
+index 0000000000000000000000000000000000000000..d232132ca075c44c7a69d79b3e6f5f7bef56d898
+--- /dev/null
++++ b/configs/datasets/physicalai/7cams_native.yaml
+@@ -0,0 +1,41 @@
++# PhysicalAI dataset configuration
++# Processed cameras:
++#   idx    camera       nominal FOV
++#    0    front_wide     120 degrees
++#    1    front_tele      30 degrees
++#    2    cross_left     120 degrees
++#    3    cross_right    120 degrees
++#    4    rear_left       70 degrees
++#    5    rear_right      70 degrees
++#    6    rear_tele       30 degrees
++# Original image sizes are read from each processed scene's metadata.json.
++# NCore V4 images retain their native projection.
++# Set undistort below to False for native training or True for rectification.
++
++data:
++  data_root: data/physicalai/processed # data root for the dataset
++  dataset: physicalai # dataset type
++  scene_idx: 0 # which scene to use
++  start_timestep: 0 # which timestep to start from
++  end_timestep: -1 # which timestep to end at, -1 means the last timestep
++  preload_device: cpu # choose from ["cpu", "cuda"], cache the data on this device
++  pixel_source: # image source and object annotations
++    type: datasets.physicalai.physicalai_sourceloader.PhysicalAIPixelSource
++    cameras: [0, 1, 2, 3, 4, 5, 6] # which cameras to use
++    downscale_when_loading: [2, 2, 2, 2, 2, 2, 2] # the size of the images to load
++    downscale: 1 # downscale factor wrt to the downscale_when_loading
++    undistort: False # whether to undistort the images
++    test_image_stride: 5 # use every Nth timestep for the test set. if 0, use all images for training and none for testing
++    load_sky_mask: True # whether to load sky mask
++    load_dynamic_mask: True # whether to load dynamic mask
++    load_objects: True # whether to load object bounding boxes
++    load_smpl: False # whether to load SMPL template for pedestrians; enable after the optional humanpose stage
++    sampler: # error based image sampler
++      buffer_downscale: 4 # downscale factor for the buffer wrt load_size
++      buffer_ratio: 0.0 # the percentage of images sampled according to the error buffer
++      start_enhance_weight: 1 # give more chance to sample starting frames, which usually have more errors
++  lidar_source: # everything related to "lidar" --- from lidar points
++    type: datasets.physicalai.physicalai_sourceloader.PhysicalAILiDARSource
++    load_lidar: True # whether to load lidar
++    lidar_downsample_factor: 4 # downsample lidar by this factor to compute percentile
++    lidar_percentile: 0.02 # percentile to compute aabb from lidar
 diff --git a/configs/omnire_geer.yaml b/configs/omnire_geer.yaml
 new file mode 100644
-index 0000000..258865d
+index 0000000000000000000000000000000000000000..937fe56446a5d7b3d191f918e18c830ed4c83b81
 --- /dev/null
 +++ b/configs/omnire_geer.yaml
 @@ -0,0 +1,279 @@
@@ -86,12 +350,12 @@ index 0000000..258865d
 +  gaussian_ctrl_general_cfg:
 +    warmup_steps: 500             # warmup steps for alpha
 +    reset_alpha_interval: 3000    # reset alpha every n steps
-+    refine_interval: 100          # refine gaussians every n steps
++    refine_interval: 300          # refine gaussians every n steps
 +    sh_degree_interval: 1000      # every n intervals turn on another sh degree
 +    n_split_samples: 2            # number of samples to split gaussians into
 +    # may differ in different models
 +    reset_alpha_value: 0.01       # reset alpha to this value
-+    densify_grad_thresh: 0.0005   # above this grad, gaussians are densified
++    densify_grad_thresh: 0.01     # threshold for the GEER densification statistic
 +    densify_size_thresh: 0.003    # below this size, gaussians are *duplicated*, otherwise split
 +    cull_alpha_thresh: 0.005      # threshold of opacity for culling gaussians
 +    cull_scale_thresh: 0.5        # threshold of scale for culling gaussians
@@ -197,7 +461,7 @@ index 0000000..258865d
 +      ins_translation:
 +        lr: 0.0005
 +        lr_final: 0.0001
-+  SMPLNodes:
++  SMPLNodes: 
 +    type: models.nodes.SMPLNodes
 +    init:
 +      only_moving: true
@@ -296,7 +560,7 @@ index 0000000..258865d
 +  fps: 10 # frames per second for the main rendered output
 +  render_full: True # whether to render full resolution videos
 +  render_test: True # whether to render test set
-+  render_novel:
++  render_novel: 
 +    traj_types:
 +      - front_center_interp # type of trajectory for novel view synthesis
 +    fps: 24 # frames per second for novel view rendering
@@ -312,7 +576,7 @@ index 0000000..258865d
 +  save_seperate_video: True # whether to save seperate videos for each scene
 \ No newline at end of file
 diff --git a/datasets/argoverse/argoverse_sourceloader.py b/datasets/argoverse/argoverse_sourceloader.py
-index 49e3e25..805fd52 100644
+index 49e3e252130a4e76a9f9a22b86fa079aa4fcee0b..805fd525cef490ea79dbd601c96bc3acaf63b8c0 100644
 --- a/datasets/argoverse/argoverse_sourceloader.py
 +++ b/datasets/argoverse/argoverse_sourceloader.py
 @@ -210,6 +210,7 @@ class ArgoVersePixelSource(ScenePixelSource):
@@ -324,7 +588,7 @@ index 49e3e25..805fd52 100644
                  undistort=self.data_cfg.undistort,
                  buffer_downscale=self.buffer_downscale,
 diff --git a/datasets/base/pixel_source.py b/datasets/base/pixel_source.py
-index 81acb3d..bf053ee 100644
+index 81acb3dfb01d7eb33dda346e9d5e0a3e10ac8c2f..663b64bfdc0e8cc208f139b0c3630ed2d446f2d7 100644
 --- a/datasets/base/pixel_source.py
 +++ b/datasets/base/pixel_source.py
 @@ -111,6 +111,8 @@ class CameraData(object):
@@ -336,7 +600,19 @@ index 81acb3d..bf053ee 100644
          # the device to move the camera to
          device: torch.device = torch.device("cpu"),
      ):
-@@ -133,8 +135,16 @@ class CameraData(object):
+@@ -123,8 +125,9 @@ class CameraData(object):
+         self.buffer_downscale = buffer_downscale
+         self.device = device
+         
+-        self.cam_name = DATASETS_CONFIG[dataset_name][cam_id]["camera_name"]
+-        self.original_size = DATASETS_CONFIG[dataset_name][cam_id]["original_size"]
++        metadata = getattr(self, "camera_metadata", None) or DATASETS_CONFIG[dataset_name][cam_id]
++        self.cam_name = metadata["camera_name"]
++        self.original_size = metadata["original_size"]
+         self.load_size = [
+             int(self.original_size[0] / downscale_when_loading),
+             int(self.original_size[1] / downscale_when_loading),
+@@ -133,8 +136,16 @@ class CameraData(object):
          # Load the images, dynamic masks, sky masks, etc.
          self.create_all_filelist()
          self.load_calibrations()
@@ -350,11 +626,11 @@ index 81acb3d..bf053ee 100644
 +        self.human_masks = None
 +        self.vehicle_masks = None
 +        self.sky_masks = None
-+
++        
          if load_dynamic_mask:
              self.load_dynamic_masks()
          if load_sky_mask:
-@@ -458,7 +468,8 @@ class CameraData(object):
+@@ -458,7 +469,8 @@ class CameraData(object):
          self.intrinsics = self.intrinsics.to(device)
          if self.distortions is not None:
              self.distortions = self.distortions.to(device)
@@ -364,15 +640,237 @@ index 81acb3d..bf053ee 100644
          if self.egocar_mask is not None:
              self.egocar_mask = self.egocar_mask.to(device)
          if self.dynamic_masks is not None:
-@@ -1129,4 +1140,4 @@ class ScenePixelSource(abc.ABC):
-                 "image_infos": image_infos,
-             })
-         
+@@ -1067,66 +1079,121 @@ class ScenePixelSource(abc.ABC):
+         """
+         return self.data_cfg.sampler.buffer_downscale
+     
+-    def prepare_novel_view_render_data(self, dataset_type: str, traj: torch.Tensor) -> list:
+-        """
+-        Prepare all necessary elements for novel view rendering.
+-
+-        Args:
+-            dataset_type (str): Type of dataset
+-            traj (torch.Tensor): Novel view trajectory, shape (N, 4, 4)
++    def prepare_novel_view_render_data(
++        self,
++        dataset_type,
++        traj,
++        camera_model=None,
++        camera_id=None,
++        height=None,
++        width=None,
++        fov=None,
++        radial_coeffs=None,
++        ftheta_parameters=None,
++        render_mode=None,
++    ):
++        """Yield virtual-camera frames without materializing a full video in memory.
+ 
+-        Returns:
+-            list: List of dicts, each containing elements required for rendering a single frame:
+-                - cam_infos: Camera information (extrinsics, intrinsics, image dimensions)
+-                - image_infos: Image-related information (indices, normalized time, viewdirs, etc.)
++        FTheta calibration may be a JSON path or a mapping. With no override,
++        use the selected dataset camera model/calibration. Virtual cameras use
++        a global shutter; recorded-camera evaluation retains capture timing.
+         """
+-        if dataset_type == "argoverse":
+-            cam_id = 1  # Use cam_id 1 for Argoverse dataset
+-        else:
+-            cam_id = 0  # Use cam_id 0 for other datasets
+-        
+-        intrinsics = self.camera_data[cam_id].intrinsics[0]  # Assume intrinsics are constant across frames
+-        H, W = self.camera_data[cam_id].HEIGHT, self.camera_data[cam_id].WIDTH
+-        
+-        original_frame_count = self.num_frames
+-        scaled_indices = torch.linspace(0, original_frame_count - 1, len(traj))
+-        normed_time = torch.linspace(0, 1, len(traj))
+-        
+-        render_data = []
+-        for i in range(len(traj)):
+-            c2w = traj[i]
+-            
+-            # Generate ray origins and directions
+-            x, y = torch.meshgrid(torch.arange(W), torch.arange(H), indexing='xy')
+-            x, y = x.to(self.device), y.to(self.device)
+-            
+-            origins, viewdirs, direction_norm = get_rays(x.flatten(), y.flatten(), c2w, intrinsics)
+-            origins = origins.reshape(H, W, 3)
+-            viewdirs = viewdirs.reshape(H, W, 3)
+-            direction_norm = direction_norm.reshape(H, W, 1)
+-            
+-            cam_infos = {
+-                "camera_to_world": c2w,
+-                "intrinsics": intrinsics,
+-                "height": torch.tensor([H], dtype=torch.long, device=self.device),
+-                "width": torch.tensor([W], dtype=torch.long, device=self.device),
+-            }
+-            
+-            image_infos = {
+-                "origins": origins,
+-                "viewdirs": viewdirs,
+-                "direction_norm": direction_norm,
+-                "img_idx": torch.full((H, W), i, dtype=torch.long, device=self.device),
+-                "frame_idx": torch.full((H, W), scaled_indices[i].round().long(), device=self.device),
+-                "normed_time": torch.full((H, W), normed_time[i], dtype=torch.float32, device=self.device),
+-                "pixel_coords": torch.stack(
+-                    [y.float() / H, x.float() / W], dim=-1
+-                ),  # [H, W, 2]
++        import json
++        from utils.geometry import camera_model_rays, scale_ftheta_calibration
++
++        if camera_id is None:
++            if dataset_type == 'argoverse':
++                camera_id = 1
++            else:
++                camera_id = self.camera_list[0]
++        source = self.camera_data[camera_id]
++        H, W = int(height or source.HEIGHT), int(width or source.WIDTH)
++        if H <= 0 or W <= 0:
++            raise ValueError('Virtual camera dimensions must be positive')
++        source_model = getattr(source, 'camera_model', 'pinhole')
++        model = camera_model or source_model
++        if model not in ('pinhole', 'fisheye', 'ftheta'):
++            raise ValueError('camera_model must be pinhole, fisheye or ftheta')
++        K = source.intrinsics[0].to(self.device).clone()
++        K[0] *= W / source.WIDTH
++        K[1] *= H / source.HEIGHT
++        radial = None
++        params = None
++        if model == 'ftheta':
++            params = ftheta_parameters
++            if isinstance(params, str):
++                with open(params) as stream:
++                    params = json.load(stream)
++            if params is None:
++                params = getattr(source, 'ftheta_parameters', None)
++            if params is None:
++                raise ValueError(
++                    'FTheta virtual rendering requires ftheta_parameters (JSON path or calibration mapping)'
++                )
++            if fov is not None:
++                raise ValueError('FTheta uses its calibration, not a separate fov override')
++            params = scale_ftheta_calibration(params, W, H)
++            K = torch.eye(3, device=self.device)
++            K[:2, 2] = K.new_tensor(params['principal_point']) + 0.5
++        elif model == 'fisheye':
++            radial = K.new_tensor(radial_coeffs if radial_coeffs is not None else [0.0] * 4)
++            if radial.shape != (4,) or not torch.isfinite(radial).all():
++                raise ValueError('OpenCV fisheye requires four finite radial_coeffs')
++            fov = 180.0 if fov is None else float(fov)
++            if not 0 < fov <= 180:
++                raise ValueError('OpenCV fisheye fov must be in (0, 180] degrees')
++            angle = np.radians(fov) / 2
++            radius = angle * (
++                1 + sum(float(k) * angle ** (2 * i + 2) for i, k in enumerate(radial))
++            )
++            if radius <= 0:
++                raise ValueError('Fisheye calibration produces a nonpositive image radius')
++            K[0, 0] = K[1, 1] = W / (2 * radius)
++            K[:2, 2] = K.new_tensor([W / 2, H / 2])
++        elif fov is not None or source_model != 'pinhole':
++            fov = 90.0 if fov is None else float(fov)
++            if not 0 < fov < 180:
++                raise ValueError('Pinhole fov must be in (0, 180) degrees')
++            K[0, 0] = K[1, 1] = W / (2 * np.tan(np.radians(fov) / 2))
++            K[:2, 2] = K.new_tensor([W / 2, H / 2])
++        rays, valid = camera_model_rays(H, W, K, model, radial, params)
++        y, x = torch.meshgrid(
++            torch.arange(H, device=self.device), torch.arange(W, device=self.device), indexing='ij'
++        )
++        for i, pose in enumerate(traj):
++            pose = pose.to(self.device)
++            time = i / max(len(traj) - 1, 1)
++            yield {
++                'cam_infos': {
++                    'camera_to_world': pose,
++                    'intrinsics': K,
++                    'height': H,
++                    'width': W,
++                    'camera_model': model,
++                    'radial_coeffs': radial,
++                    'ftheta_parameters': params,
++                    'render_mode': render_mode,
++                    'shutter_type': 'GLOBAL',
++                },
++                'image_infos': {
++                    'origins': pose[:3, 3].expand(H, W, 3),
++                    'viewdirs': rays @ pose[:3, :3].T,
++                    'direction_norm': torch.ones_like(rays[..., :1]),
++                    'img_idx': torch.full(
++                        (H, W),
++                        round(time * (self.num_frames - 1)) * self.num_cams
++                        + int(source.unique_cam_idx),
++                        dtype=torch.long,
++                        device=self.device,
++                    ),
++                    'frame_idx': torch.full(
++                        (H, W),
++                        round(time * (self.num_frames - 1)),
++                        dtype=torch.long,
++                        device=self.device,
++                    ),
++                    'normed_time': torch.full((H, W), time, device=self.device),
++                    'pixel_coords': torch.stack((y / H, x / W), -1),
++                    'egocar_masks': (~valid).float(),
++                },
+             }
+-            
+-            render_data.append({
+-                "cam_infos": cam_infos,
+-                "image_infos": image_infos,
+-            })
+-        
 -        return render_data
 \ No newline at end of file
-+        return render_data
+diff --git a/datasets/dataset_meta.py b/datasets/dataset_meta.py
+index 0d208940bd1518e494706084f553766a18f8963d..953ca1cc6427ce1a253527027bc0bbe40528e7d1 100644
+--- a/datasets/dataset_meta.py
++++ b/datasets/dataset_meta.py
+@@ -181,4 +181,41 @@ DATASETS_CONFIG = {
+             "egocar_visible": False
+         },
+     },
++    "physicalai": {
++        0: {
++            "camera_name": "front_wide",
++            "original_size": (1080, 1920),
++            "egocar_visible": True
++        },
++        1: {
++            "camera_name": "front_tele",
++            "original_size": (1080, 1920),
++            "egocar_visible": False
++        },
++        2: {
++            "camera_name": "cross_left",
++            "original_size": (1080, 1920),
++            "egocar_visible": True
++        },
++        3: {
++            "camera_name": "cross_right",
++            "original_size": (1080, 1920),
++            "egocar_visible": True
++        },
++        4: {
++            "camera_name": "rear_left",
++            "original_size": (1080, 1920),
++            "egocar_visible": True
++        },
++        5: {
++            "camera_name": "rear_right",
++            "original_size": (1080, 1920),
++            "egocar_visible": True
++        },
++        6: {
++            "camera_name": "rear_tele",
++            "original_size": (1080, 1920),
++            "egocar_visible": False
++        },
++    },
+ }
 diff --git a/datasets/driving_dataset.py b/datasets/driving_dataset.py
-index 38b3e07..c242a08 100644
+index 38b3e071b8bbe2ca94183020e82f9fba4dc52c91..38a78b3cdd83a6236aab2676b8cad9de81e28684 100644
 --- a/datasets/driving_dataset.py
 +++ b/datasets/driving_dataset.py
 @@ -46,6 +46,14 @@ class DrivingDataset(SceneDataset):
@@ -407,8 +905,118 @@ index 38b3e07..c242a08 100644
          self.aabb = self.get_aabb()
  
          # ---- define train and test indices ---- #
+@@ -559,6 +567,10 @@ class DrivingDataset(SceneDataset):
+         # project lidar points to the image plane
+         for cam in self.pixel_source.camera_data.values():
+             for frame_idx in range(len(cam)):
++                if hasattr(cam, "project_points"):
++                    _, _, visible = cam.project_points(pts_xyz, frame_idx)
++                    valid_mask |= visible
++                    continue
+                 intrinsic_4x4 = torch.nn.functional.pad(
+                     cam.intrinsics[frame_idx], (0, 1, 0, 1)
+                 )
+@@ -645,36 +657,39 @@ class DrivingDataset(SceneDataset):
+                     + lidar_infos["lidar_viewdirs"] * lidar_infos["lidar_ranges"]
+                 )
+                 
+-                # project lidar points to the image plane
+-                if cam.undistort:
+-                    new_camera_matrix, _ = cv2.getOptimalNewCameraMatrix(
+-                                cam.intrinsics[frame_idx].cpu().numpy(),
+-                                cam.distortions[frame_idx].cpu().numpy(),
+-                                (cam.WIDTH, cam.HEIGHT),
+-                                alpha=1,
+-                            )
+-                    intrinsic_4x4 = torch.nn.functional.pad(
++                if hasattr(cam, "project_points"):
++                    cam_points, depth, valid_mask = cam.project_points(lidar_points, frame_idx)
++                else:
++                    # project lidar points to the image plane
++                    if cam.undistort:
++                        new_camera_matrix, _ = cv2.getOptimalNewCameraMatrix(
++                            cam.intrinsics[frame_idx].cpu().numpy(),
++                            cam.distortions[frame_idx].cpu().numpy(),
++                            (cam.WIDTH, cam.HEIGHT),
++                            alpha=1,
++                        )
++                        intrinsic_4x4 = torch.nn.functional.pad(
+                             torch.from_numpy(new_camera_matrix), (0, 1, 0, 1)
+                         ).to(self.device)
+-                else:
+-                    intrinsic_4x4 = torch.nn.functional.pad(
+-                        cam.intrinsics[frame_idx], (0, 1, 0, 1)
+-                    )
+-                intrinsic_4x4[3, 3] = 1.0
+-                lidar2img = intrinsic_4x4 @ cam.cam_to_worlds[frame_idx].inverse()
+-                lidar_points = (
+-                    lidar2img[:3, :3] @ lidar_points.T + lidar2img[:3, 3:4]
+-                ).T # (num_pts, 3)
+-                
+-                depth = lidar_points[:, 2]
+-                cam_points = lidar_points[:, :2] / (depth.unsqueeze(-1) + 1e-6) # (num_pts, 2)
+-                valid_mask = (
+-                    (cam_points[:, 0] >= 0)
+-                    & (cam_points[:, 0] < cam.WIDTH)
+-                    & (cam_points[:, 1] >= 0)
+-                    & (cam_points[:, 1] < cam.HEIGHT)
+-                    & (depth > 0)
+-                ) # (num_pts, )
++                    else:
++                        intrinsic_4x4 = torch.nn.functional.pad(
++                            cam.intrinsics[frame_idx], (0, 1, 0, 1)
++                        )
++                    intrinsic_4x4[3, 3] = 1.0
++                    lidar2img = intrinsic_4x4 @ cam.cam_to_worlds[frame_idx].inverse()
++                    lidar_points = (
++                        lidar2img[:3, :3] @ lidar_points.T + lidar2img[:3, 3:4]
++                    ).T  # (num_pts, 3)
++
++                    depth = lidar_points[:, 2]
++                    cam_points = lidar_points[:, :2] / (depth.unsqueeze(-1) + 1e-6)  # (num_pts, 2)
++                    valid_mask = (
++                        (cam_points[:, 0] >= 0)
++                        & (cam_points[:, 0] < cam.WIDTH)
++                        & (cam_points[:, 1] >= 0)
++                        & (cam_points[:, 1] < cam.HEIGHT)
++                        & (depth > 0)
++                    )  # (num_pts, )
+                 depth = depth[valid_mask]
+                 _cam_points = cam_points[valid_mask]
+                 depth_map = torch.zeros(
+@@ -742,17 +757,17 @@ class DrivingDataset(SceneDataset):
+         
+         return novel_trajs
+ 
+-    def prepare_novel_view_render_data(self, traj: torch.Tensor) -> list:
+-            """
+-            Prepare all necessary elements for novel view rendering.
++    def prepare_novel_view_render_data(self, traj: torch.Tensor, **kwargs) -> list:
++        """
++        Prepare all necessary elements for novel view rendering.
+ 
+-            Args:
+-                traj (torch.Tensor): Novel view trajectory, shape (N, 4, 4)
++        Args:
++            traj (torch.Tensor): Novel view trajectory, shape (N, 4, 4)
+ 
+-            Returns:
+-                list: List of dicts, each containing elements required for rendering a single frame:
+-                    - cam_infos: Camera information (extrinsics, intrinsics, image dimensions)
+-                    - image_infos: Image-related information (indices, normalized time, viewdirs, etc.)
+-            """
+-            # Call the PixelSource's method
+-            return self.pixel_source.prepare_novel_view_render_data(self.type, traj)
+\ No newline at end of file
++        Returns:
++            list: List of dicts, each containing elements required for rendering a single frame:
++                - cam_infos: Camera information (extrinsics, intrinsics, image dimensions)
++                - image_infos: Image-related information (indices, normalized time, viewdirs, etc.)
++        """
++        # Call the PixelSource's method
++        return self.pixel_source.prepare_novel_view_render_data(self.type, traj, **kwargs)
 diff --git a/datasets/kitti/kitti_sourceloader.py b/datasets/kitti/kitti_sourceloader.py
-index 390217f..3567faa 100644
+index 390217f7f1cf6b89678d624672a84812b840859c..3567faa77cf7705ce1bbc246e2045db6bdbd2f2b 100644
 --- a/datasets/kitti/kitti_sourceloader.py
 +++ b/datasets/kitti/kitti_sourceloader.py
 @@ -181,6 +181,7 @@ class KITTIPixelSource(ScenePixelSource):
@@ -420,7 +1028,7 @@ index 390217f..3567faa 100644
                  undistort=self.data_cfg.undistort,
                  buffer_downscale=self.buffer_downscale,
 diff --git a/datasets/nuplan/nuplan_sourceloader.py b/datasets/nuplan/nuplan_sourceloader.py
-index 0b0d008..77a60ef 100644
+index 0b0d008c23b69528993f4256c03297093f00edbe..77a60efbc099f5b19fb7dafe007c0ce603e36448 100644
 --- a/datasets/nuplan/nuplan_sourceloader.py
 +++ b/datasets/nuplan/nuplan_sourceloader.py
 @@ -176,6 +176,7 @@ class NuPlanPixelSource(ScenePixelSource):
@@ -432,7 +1040,7 @@ index 0b0d008..77a60ef 100644
                  undistort=self.data_cfg.undistort,
                  buffer_downscale=self.buffer_downscale,
 diff --git a/datasets/nuscenes/nuscenes_sourceloader.py b/datasets/nuscenes/nuscenes_sourceloader.py
-index b0b6f71..e75b93b 100644
+index b0b6f71bda9acb53004461471bc72d93c7bf68d9..e75b93bf70031bcdaa7d4e96a4645e9bc0bdeebe 100644
 --- a/datasets/nuscenes/nuscenes_sourceloader.py
 +++ b/datasets/nuscenes/nuscenes_sourceloader.py
 @@ -181,6 +181,7 @@ class NuScenesPixelSource(ScenePixelSource):
@@ -444,7 +1052,7 @@ index b0b6f71..e75b93b 100644
                  undistort=self.data_cfg.undistort,
                  buffer_downscale=self.buffer_downscale,
 diff --git a/datasets/pandaset/pandaset_sourceloader.py b/datasets/pandaset/pandaset_sourceloader.py
-index 6a67372..4649a3e 100644
+index 6a67372ba071ad99b75b9f904f155bbd9806ff90..4649a3e8da217b407fae6da86678afeedb761985 100644
 --- a/datasets/pandaset/pandaset_sourceloader.py
 +++ b/datasets/pandaset/pandaset_sourceloader.py
 @@ -180,6 +180,7 @@ class PandaPixelSource(ScenePixelSource):
@@ -455,11 +1063,1467 @@ index 6a67372..4649a3e 100644
                  downscale_when_loading=self.data_cfg.downscale_when_loading[idx],
                  undistort=self.data_cfg.undistort,
                  buffer_downscale=self.buffer_downscale,
+diff --git a/datasets/physicalai/physicalai_human_utils.py b/datasets/physicalai/physicalai_human_utils.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..8cb72353a98f41ac39555434c05363afb622d787
+--- /dev/null
++++ b/datasets/physicalai/physicalai_human_utils.py
+@@ -0,0 +1,134 @@
++"""Native-camera pedestrian boxes for the existing human-pose pipeline."""
++
++import json
++from pathlib import Path
++from typing import List
++
++import cv2
++import numpy as np
++import torch
++
++from utils.geometry import project_world_camera
++
++CAMERA_LIST = list(range(7))
++
++
++def project_human_boxes(
++    scene_dir: str,
++    camera_list: List[int],
++    save_temp=True,
++    verbose=False,
++    narrow_width_ratio=0.2,
++    fps=10
++):
++    """Project human boxes to 2D image space and save the results to pkl files.
++
++    Args:
++        scene_dir: str, path to the scene directory
++        camera_list: List[int], a list of camera ids to be processed
++        save_temp: bool, whether to save the intermediate results
++        verbose: bool, whether to visualize the projected boxes
++        narrow_width_ratio: narrow the projected boxes horizontally by this ratio
++        fps: int, FPS for the visualization video
++
++    Returns:
++        results: dict, projected boxes and track ids for each camera and frame
++    """
++    if verbose and fps <= 0:
++        raise ValueError("Visualization FPS must be positive")
++    root = Path(scene_dir)
++    save_dir = root / 'humanpose/temp/Pedes_GTTracks'
++    instances = json.loads((root / 'instances/instances_info.json').read_text())
++    frames = json.loads((root / 'instances/frame_instances.json').read_text())
++    signs = torch.tensor([[x, y, z] for x in (-1.0, 1.0) for y in (-1.0, 1.0) for z in (-1.0, 1.0)])
++    results = {}
++    for cam_id in camera_list:
++        p = json.loads((root / 'intrinsics' / f'{cam_id}.json').read_text())
++        width, height = p['resolution']
++        result = {}
++        video_writer = None
++        if verbose:
++            video_dir = save_dir / 'vis'
++            per_cam_vis_dir = video_dir / 'images' / str(cam_id)
++            per_cam_vis_dir.mkdir(parents=True, exist_ok=True)
++            output_path = video_dir / f'cam_{cam_id}.mp4'
++            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
++            video_writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
++            if not video_writer.isOpened():
++                video_writer.release()
++                raise RuntimeError(f"Could not open debug video: {output_path}")
++        try:
++            for frame, track_ids in frames.items():
++                entry = {'gt_bbox': [], 'extra_data': {'gt_track_id': [], 'gt_class': []}}
++                if verbose:
++                    image_path = root / 'images' / f'{int(frame):03d}_{cam_id}.png'
++                    ori_image = cv2.imread(str(image_path))
++                    if ori_image is None:
++                        raise FileNotFoundError(f"Could not read camera image: {image_path}")
++                    if ori_image.shape[:2] != (height, width):
++                        raise ValueError(
++                            f"Camera image dimensions do not match calibration: {image_path}"
++                        )
++                    image_plotted = ori_image.copy()
++                start = torch.from_numpy(
++                    np.loadtxt(root / 'camera_pose_start' / f'{int(frame):03d}_{cam_id}.txt')
++                ).float()
++                end = torch.from_numpy(
++                    np.loadtxt(root / 'camera_pose' / f'{int(frame):03d}_{cam_id}.txt')
++                ).float()
++                for track_id in track_ids:
++                    track = instances[str(track_id)]
++                    if track['class_name'] != 'Pedestrian':
++                        continue
++                    ann = track['frame_annotations']
++                    index = ann['frame_idx'].index(int(frame))
++                    pose, size = torch.tensor(ann['obj_to_world'][index]), torch.tensor(
++                        ann['box_size'][index]
++                    )
++                    points = (signs * size / 2) @ pose[:3, :3].T + pose[:3, 3]
++                    uv, _, valid = project_world_camera(
++                        points,
++                        start,
++                        end,
++                        torch.eye(3),
++                        width,
++                        height,
++                        'ftheta',
++                        ftheta_parameters=p,
++                        shutter_type=p.get('shutter_type', 'GLOBAL'),
++                    )
++                    if valid.sum() < 4:
++                        continue
++                    lo, hi = uv[valid].amin(0), uv[valid].amax(0)
++                    inset = (hi[0] - lo[0]) * narrow_width_ratio
++                    lo[0] += inset
++                    hi[0] -= inset
++                    if (hi - lo).min() < 4:
++                        continue
++                    entry['gt_bbox'].append(
++                        [float(lo[0]), float(lo[1]), float(hi[0] - lo[0]), float(hi[1] - lo[1])]
++                    )
++                    entry['extra_data']['gt_track_id'].append(track_id)
++                    entry['extra_data']['gt_class'].append([0])
++                    if verbose:
++                        top_left = (int(lo[0]), int(lo[1]))
++                        bottom_right = (int(hi[0]), int(hi[1]))
++                        raw_image = cv2.rectangle(
++                            ori_image.copy(), top_left, bottom_right, (0, 255, 0), 2
++                        )
++                        image_path = per_cam_vis_dir / f'{int(frame)}_{track_id}.jpg'
++                        if not cv2.imwrite(str(image_path), raw_image):
++                            raise OSError(f"Could not write debug image: {image_path}")
++                        cv2.rectangle(image_plotted, top_left, bottom_right, (0, 255, 0), 2)
++                result[int(frame)] = entry
++                if verbose:
++                    video_writer.write(image_plotted)
++        finally:
++            if video_writer is not None:
++                video_writer.release()
++        if save_temp:
++            path = save_dir / f'{cam_id}.pkl'
++            path.parent.mkdir(parents=True, exist_ok=True)
++            path.write_text(json.dumps(result))
++        results[cam_id] = result
++    return results
+diff --git a/datasets/physicalai/physicalai_preprocess.py b/datasets/physicalai/physicalai_preprocess.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..92fcb2c17230e97263c2cca9c882ae3a801d4637
+--- /dev/null
++++ b/datasets/physicalai/physicalai_preprocess.py
+@@ -0,0 +1,440 @@
++"""Convert downloaded PhysicalAI NCore V4 clips to DriveStudio scene folders."""
++
++import json
++import sys
++from pathlib import Path
++
++import numpy as np
++import torch
++from PIL import Image
++from scipy.spatial.transform import Rotation, Slerp
++from tqdm import tqdm
++
++from datasets.tools.multiprocess_utils import track_parallel_progress
++from utils.geometry import project_camera_model, scale_ftheta_calibration
++
++CAMERAS = (
++    'camera_front_wide_120fov',
++    'camera_front_tele_30fov',
++    'camera_cross_left_120fov',
++    'camera_cross_right_120fov',
++    'camera_rear_left_70fov',
++    'camera_rear_right_70fov',
++    'camera_rear_tele_30fov',
++)
++
++
++class PhysicalAIProcessor:
++    def __init__(
++        self,
++        load_dir,
++        save_dir,
++        process_keys,
++        process_id_list=None,
++        workers=1,
++    ):
++        self.paths = sorted(Path(load_dir).glob('**/pai_*.json'))
++        if not self.paths:
++            raise FileNotFoundError('No pai_<clip_uuid>.json files found under ' + str(load_dir))
++        self.save_dir = Path(save_dir)
++        self.process_keys = set(process_keys)
++        unknown = self.process_keys - {
++            'images',
++            'calib',
++            'pose',
++            'lidar',
++            'objects',
++            'dynamic_masks',
++        }
++        if unknown:
++            raise ValueError('Unsupported PhysicalAI process_keys: ' + str(sorted(unknown)))
++        self.process_id_list = (
++            list(process_id_list) if process_id_list is not None else list(range(len(self.paths)))
++        )
++        self.workers = int(workers)
++        print('will process keys: ', sorted(self.process_keys), flush=True)
++
++    def convert(self):
++        print('Start converting ...', flush=True)
++        if self.workers == 1:
++            for scene in self.process_id_list:
++                self.convert_one(scene)
++        else:
++            track_parallel_progress(self.convert_one, self.process_id_list, self.workers)
++        print('\nFinished ...', flush=True)
++
++    def _source(self, scene_id):
++        if str(scene_id).isdigit():
++            index = int(scene_id)
++            if not 0 <= index < len(self.paths):
++                raise ValueError(
++                    f'Scene {index} is outside the {len(self.paths)} downloaded clips; specify --scene_ids'
++                )
++            return self.paths[index], f'{index:03d}'
++        matches = [p for p in self.paths if p.stem == 'pai_' + str(scene_id)]
++        if len(matches) != 1:
++            raise ValueError('Expected exactly one downloaded clip for ' + str(scene_id))
++        return matches[0], str(scene_id)
++
++    @staticmethod
++    def _calibration(sensor):
++        p = sensor.model_parameters
++        if not hasattr(p, 'pixeldist_to_angle_poly'):
++            raise ValueError(f'{sensor.sensor_id} is not an FTheta camera')
++        # Additional windshield models require their own renderer support.
++        if getattr(p, 'external_distortion_parameters', None) is not None:
++            raise ValueError(
++                'External/windshield distortion is not supported; refusing to discard calibration'
++            )
++        result = {
++            key: np.asarray(getattr(p, key)).tolist()
++            for key in (
++                'resolution',
++                'principal_point',
++                'linear_cde',
++                'pixeldist_to_angle_poly',
++                'angle_to_pixeldist_poly',
++            )
++        }
++        result.update(
++            camera_model='ftheta',
++            reference_poly=p.reference_poly.name,
++            max_angle=float(p.max_angle),
++            shutter_type=p.shutter_type.name,
++        )
++        return result
++
++    @staticmethod
++    def _tracks(loader, timestamps):
++        tracks = {}
++        mapping = {
++            'automobile': 'Vehicle',
++            'car': 'Vehicle',
++            'vehicle': 'Vehicle',
++            'other_vehicle': 'Vehicle',
++            'heavy_truck': 'Vehicle',
++            'truck': 'Vehicle',
++            'bus': 'Vehicle',
++            'trailer': 'Vehicle',
++            'pedestrian': 'Pedestrian',
++            'person': 'Pedestrian',
++            'rider': 'Cyclist',
++            'bicycle': 'Cyclist',
++            'bicycle_with_rider': 'Cyclist',
++            'cyclist': 'Cyclist',
++            'motorcycle': 'Cyclist',
++            'motorcycle_with_rider': 'Cyclist',
++        }
++        for observation in loader.get_cuboid_track_observations():
++            category = mapping.get(str(observation.class_id).lower())
++            if category is None or observation.source.name != 'AUTOLABEL':
++                continue
++            bbox = observation.bbox3
++            pose = np.eye(4)
++            pose[:3, :3] = Rotation.from_euler('xyz', bbox.rot).as_matrix()
++            pose[:3, 3] = bbox.centroid
++            reference = loader.pose_graph.evaluate_poses(
++                observation.reference_frame_id,
++                'world',
++                np.asarray(observation.reference_frame_timestamp_us, dtype=np.uint64),
++            )
++            track_observation = {
++                'timestamp': int(observation.timestamp_us),
++                'pose': reference @ pose,
++                'size': list(bbox.dim),
++                'class_name': category,
++            }
++            tracks.setdefault(str(observation.track_id), []).append(track_observation)
++        instances, frames = {}, {str(i): [] for i in range(len(timestamps))}
++        for source_id, observations in sorted(tracks.items()):
++            observations_by_time = {}
++            for observation in observations:
++                observations_by_time[observation['timestamp']] = observation
++            times = np.asarray(sorted(observations_by_time), dtype=np.int64)
++            observations = [observations_by_time[timestamp] for timestamp in times]
++            annotations = {'frame_idx': [], 'obj_to_world': [], 'box_size': []}
++            for frame, timestamp in enumerate(timestamps):
++                if timestamp < times[0] or timestamp > times[-1]:
++                    continue
++                right = int(np.searchsorted(times, timestamp))
++                if times[right] == timestamp:
++                    pose = observations[right]['pose']
++                    size = observations[right]['size']
++                else:
++                    left = right - 1
++                    if times[right] - times[left] > 500000:
++                        continue  # Do not bridge missing annotation tracks.
++                    t = float(timestamp - times[left]) / float(times[right] - times[left])
++                    start_pose = observations[left]['pose']
++                    end_pose = observations[right]['pose']
++                    pose = np.eye(4)
++                    pose[:3, :3] = Slerp(
++                        [0.0, 1.0],
++                        Rotation.from_matrix(np.stack((start_pose[:3, :3], end_pose[:3, :3]))),
++                    )(t).as_matrix()
++                    pose[:3, 3] = (1 - t) * start_pose[:3, 3] + t * end_pose[:3, 3]
++                    size = (
++                        (1 - t) * np.asarray(observations[left]['size'])
++                        + t * np.asarray(observations[right]['size'])
++                    ).tolist()
++                annotations['frame_idx'].append(frame)
++                annotations['obj_to_world'].append(pose.tolist())
++                annotations['box_size'].append(size)
++            if annotations['frame_idx']:
++                index = len(instances)
++                instances[str(index)] = {
++                    'id': source_id,
++                    'class_name': observations[0]['class_name'],
++                    'frame_annotations': annotations,
++                }
++                for frame in annotations['frame_idx']:
++                    frames[str(frame)].append(index)
++        return instances, frames
++
++    def convert_one(self, scene_id):
++        try:
++            from ncore.data import FrameTimepoint, FThetaCameraModelParameters
++            from ncore.data.v4 import SequenceComponentGroupsReader, SequenceLoaderV4
++            from upath import UPath
++        except ImportError as exc:
++            raise ImportError(
++                'PhysicalAI preprocessing needs nvidia-ncore and its dependencies; see docs/PhysicalAI.md'
++            ) from exc
++        if sys.version_info < (3, 10):
++            # NCore's nested enum annotation fails to resolve when decoding FTheta on Python 3.9.
++            FThetaCameraModelParameters.__annotations__['reference_poly'] = (
++                FThetaCameraModelParameters.PolynomialType
++            )
++        source, name = self._source(scene_id)
++        meta = json.loads(source.read_text())
++        if not str(meta.get('version', '')).startswith('v4'):
++            raise ValueError('Only NCore V4 clips are supported')
++        loader = SequenceLoaderV4(
++            SequenceComponentGroupsReader(
++                [UPath(str(source.parent / s['path'])) for s in meta['component_stores']],
++                open_consolidated=True,
++            ),
++            poses_component_group_name='default',
++            intrinsics_component_group_name='default',
++            masks_component_group_name='default',
++            cuboids_component_group_name='default',
++        )
++        sensors = {
++            i: loader.get_camera_sensor(name)
++            for i, name in enumerate(CAMERAS)
++            if name in loader.camera_ids
++        }
++        if 0 not in sensors:
++            raise ValueError('The reference front-wide camera is required')
++        # Sample the full 30 Hz clip at approximately 10 Hz, matching the dataset config.
++        indices = np.arange(0, len(sensors[0].frames_timestamps_us), 3)
++        if not len(indices):
++            raise ValueError('Selected frame range is empty')
++        timestamps = (
++            np.asarray(sensors[0].frames_timestamps_us[indices]).mean(axis=-1).astype(np.int64)
++        )
++        out = self.save_dir / name
++        out.mkdir(parents=True, exist_ok=True)
++        manifest = out / 'metadata.json'
++        cameras, selections = {}, {}
++        for cam_id, sensor in sensors.items():
++            p = self._calibration(sensor)
++            size = [int(v) for v in p['resolution']]
++            p = scale_ftheta_calibration(p, *size)
++            selection = [
++                sensor.get_closest_frame_index(int(t), relative_frame_time=0.5) for t in timestamps
++            ]
++            actual_times = np.asarray(sensor.frames_timestamps_us[selection], dtype=np.int64)
++            if (
++                len(set(selection)) != len(selection)
++                or np.max(np.abs(actual_times.mean(-1) - timestamps)) > 50000
++            ):
++                raise ValueError(
++                    f'Camera {cam_id}: duplicate frames or synchronization error >50 ms'
++                )
++            selections[cam_id] = selection
++            cameras[str(cam_id)] = {
++                'camera_name': CAMERAS[cam_id],
++                'original_size': size[::-1],
++                'source_frame_indices': [int(v) for v in selection],
++                'timestamps_us': actual_times.tolist(),
++                'calibration': p,
++            }
++        identity = {
++            'schema': 'drivestudio-physicalai/1',
++            'clip_id': meta['sequence_id'],
++            'num_frames': len(timestamps),
++            'timestamps_us': timestamps.tolist(),
++            'cameras': cameras,
++            'native': True,
++            'image_downscale': 1,
++            'lidar_format': 'float32 XYZI, motion compensated to sensor END frame',
++            'pose_convention': 'OpenCV camera-to-world; all poses in NCore world',
++            'annotations': 'NCore AUTOLABEL cuboids; sky/fine masks and SMPL are separate stages',
++        }
++        if manifest.exists() and json.loads(manifest.read_text()) != identity:
++            raise ValueError(
++                'Existing scene has different source/calibration/frame selection; use a new target directory'
++            )
++        if not manifest.exists() and any(out.iterdir()):
++            raise ValueError('Nonempty scene without matching metadata; use a new target directory')
++        manifest.write_text(json.dumps(identity, indent=2) + '\n')
++
++        self.create_folder(out)
++        np.savetxt(out / 'timestamps.txt', timestamps, fmt='%d')
++        instances, frames = {}, {}
++        if 'objects' in self.process_keys or 'dynamic_masks' in self.process_keys:
++            instances, frames = self._tracks(loader, timestamps)
++        if 'objects' in self.process_keys:
++            self.save_objects(out, instances, frames)
++        for cam_id, sensor in sensors.items():
++            calibration = cameras[str(cam_id)]['calibration']
++            width, height = calibration['resolution']
++            if 'calib' in self.process_keys:
++                self.save_calib(sensor, calibration, out, cam_id)
++            ego = sensor.get_mask_images().get('ego')
++            if ego is None:
++                invalid = np.zeros((height, width), dtype=np.uint8)
++            else:
++                invalid = np.asarray(
++                    ego.convert('L').resize((width, height), Image.Resampling.NEAREST)
++                )
++            for frame, source_index in enumerate(
++                tqdm(
++                    selections[cam_id], desc=f'File {name}, camera {cam_id}',
++                    total=len(selections[cam_id]), dynamic_ncols=True
++                )
++            ):
++                start = sensor.get_frames_T_sensor_target(
++                    'world', source_index, FrameTimepoint.START
++                )
++                end = sensor.get_frames_T_sensor_target('world', source_index, FrameTimepoint.END)
++                if 'images' in self.process_keys:
++                    self.save_image(sensor, source_index, out, frame, cam_id, calibration, invalid)
++                if 'pose' in self.process_keys:
++                    self.save_pose(sensor, out, frame, cam_id, start, end)
++                if 'dynamic_masks' in self.process_keys:
++                    camera_pose = end
++                    self.save_dynamic_mask(
++                        out, frame, cam_id, calibration, camera_pose, instances, frames[str(frame)]
++                    )
++        if 'lidar' in self.process_keys:
++            self.save_lidar(loader, timestamps, out)
++        print(f'PhysicalAI {name}: {len(timestamps)} timesteps, {len(sensors)} cameras -> {out}')
++
++    def create_folder(self, scene_dir):
++        folders = []
++        if 'images' in self.process_keys:
++            folders.extend(['images', 'invalid_masks'])
++        if 'calib' in self.process_keys:
++            folders.extend(['intrinsics', 'extrinsics'])
++        if 'pose' in self.process_keys:
++            folders.extend(['camera_pose', 'camera_pose_start', 'ego_pose'])
++        if 'objects' in self.process_keys:
++            folders.append('instances')
++        if 'dynamic_masks' in self.process_keys:
++            folders.extend(['dynamic_masks/all', 'dynamic_masks/human', 'dynamic_masks/vehicle'])
++        if 'lidar' in self.process_keys:
++            folders.extend(['lidar', 'lidar_pose'])
++        for folder in folders:
++            (scene_dir / folder).mkdir(parents=True, exist_ok=True)
++
++    def save_image(self, sensor, source_index, scene_dir, frame_idx, cam_id, calibration, invalid):
++        width, height = calibration['resolution']
++        image = sensor.get_frame_image(source_index).convert('RGB')
++        if image.size != (width, height):
++            raise ValueError(f'Camera {cam_id}: image dimensions do not match calibration')
++        stem = f'{frame_idx:03d}_{cam_id}'
++        image.save(scene_dir / 'images' / (stem + '.png'))
++        Image.fromarray((invalid > 0).astype(np.uint8) * 255).save(
++            scene_dir / 'invalid_masks' / (stem + '.png')
++        )
++
++    def save_calib(self, sensor, calibration, scene_dir, cam_id):
++        (scene_dir / 'intrinsics' / f'{cam_id}.json').write_text(json.dumps(calibration, indent=2))
++        np.savetxt(scene_dir / 'extrinsics' / f'{cam_id}.txt', sensor.T_sensor_rig)
++
++    def save_pose(self, sensor, scene_dir, frame_idx, cam_id, start, end):
++        stem = f'{frame_idx:03d}_{cam_id}'
++        np.savetxt(scene_dir / 'camera_pose' / (stem + '.txt'), end)
++        np.savetxt(scene_dir / 'camera_pose_start' / (stem + '.txt'), start)
++        if cam_id == 0:
++            np.savetxt(
++                scene_dir / 'ego_pose' / f'{frame_idx:03d}.txt',
++                end @ np.linalg.inv(sensor.T_sensor_rig),
++            )
++
++    def save_objects(self, scene_dir, instances, frames):
++        (scene_dir / 'instances/instances_info.json').write_text(json.dumps(instances, indent=2))
++        (scene_dir / 'instances/frame_instances.json').write_text(json.dumps(frames, indent=2))
++
++    def save_dynamic_mask(
++        self, scene_dir, frame_idx, cam_id, calibration, camera_pose, instances, track_ids
++    ):
++        width, height = calibration['resolution']
++        masks = {
++            kind: np.zeros((height, width), dtype=np.uint8) for kind in ('all', 'human', 'vehicle')
++        }
++        signs = np.array([[x, y, z] for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)])
++        world_to_camera = np.linalg.inv(camera_pose)
++        for track_id in track_ids:
++            track = instances[str(track_id)]
++            annotations = track['frame_annotations']
++            index = annotations['frame_idx'].index(frame_idx)
++            pose = np.asarray(annotations['obj_to_world'][index])
++            size = np.asarray(annotations['box_size'][index])
++            world = (signs * size / 2) @ pose[:3, :3].T + pose[:3, 3]
++            xyz = torch.from_numpy(
++                world @ world_to_camera[:3, :3].T + world_to_camera[:3, 3]
++            ).float()
++            pixels, valid = project_camera_model(
++                xyz, torch.eye(3), 'ftheta', ftheta_parameters=calibration
++            )
++            if valid.sum() < 4:
++                continue
++            uv = pixels[valid].numpy()
++            lo = np.maximum(np.floor(uv.min(0)), 0).astype(int)
++            hi = np.minimum(np.ceil(uv.max(0)), [width, height]).astype(int)
++            kind = 'human' if track['class_name'] == 'Pedestrian' else 'vehicle'
++            if np.all(hi > lo):
++                for key in ('all', kind):
++                    masks[key][lo[1] : hi[1], lo[0] : hi[0]] = 255
++        stem = f'{frame_idx:03d}_{cam_id}'
++        for kind, mask in masks.items():
++            Image.fromarray(mask).save(scene_dir / 'dynamic_masks' / kind / (stem + '.png'))
++
++    def save_lidar(self, loader, timestamps, scene_dir):
++        from ncore.data import FrameTimepoint
++
++        lidar_ids = list(loader.lidar_ids)
++        if not lidar_ids:
++            raise ValueError('No LiDAR available in this clip')
++        lidar_id = lidar_ids[0]
++        for sensor_id in lidar_ids:
++            if 'top' in sensor_id:
++                lidar_id = sensor_id
++                break
++        lidar = loader.get_lidar_sensor(lidar_id)
++        for frame, timestamp in enumerate(
++            tqdm(timestamps, desc=f'File {scene_dir.name}, LiDAR', total=len(timestamps), dynamic_ncols=True)
++        ):
++            index = lidar.get_closest_frame_index(int(timestamp), relative_frame_time=0.5)
++            if abs(float(np.mean(lidar.frames_timestamps_us[index])) - timestamp) > 100000:
++                raise ValueError('LiDAR synchronization error >100 ms')
++            cloud = lidar.get_frame_point_cloud(
++                index, motion_compensation=True, with_start_points=False
++            )
++            xyz = np.asarray(cloud.xyz_m_end, dtype=np.float32)
++            valid = np.asarray(lidar.get_frame_ray_bundle_return_valid_mask(index)).copy()
++            distance = np.linalg.norm(xyz, axis=-1)
++            valid &= np.isfinite(xyz).all(-1) & (distance > 0.5) & (distance < 120)
++            intensity = np.asarray(
++                lidar.get_frame_ray_bundle_return_intensity(index), dtype=np.float32
++            )
++            np.column_stack((xyz[valid], intensity[valid])).astype(np.float32).tofile(
++                scene_dir / 'lidar' / f'{frame:03d}.bin'
++            )
++            np.savetxt(
++                scene_dir / 'lidar_pose' / f'{frame:03d}.txt',
++                lidar.get_frames_T_sensor_target('world', index, FrameTimepoint.END),
++            )
+diff --git a/datasets/physicalai/physicalai_sourceloader.py b/datasets/physicalai/physicalai_sourceloader.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..965f038594e651cb4cb8e3669692eded7dfdaf36
+--- /dev/null
++++ b/datasets/physicalai/physicalai_sourceloader.py
+@@ -0,0 +1,510 @@
++"""PhysicalAI sources for the regular DrivingDataset training/evaluation path."""
++
++import json
++import logging
++import os
++from pathlib import Path
++
++import cv2
++import joblib
++import numpy as np
++import torch
++import torch.nn.functional as F
++from PIL import Image
++from tqdm import tqdm
++from pytorch3d.transforms import matrix_to_quaternion
++
++from datasets.dataset_meta import DATASETS_CONFIG
++from datasets.base.pixel_source import CameraData, ScenePixelSource
++from datasets.base.lidar_source import SceneLidarSource
++from datasets.base.scene_dataset import ModelType
++from utils.geometry import (
++    camera_model_rays,
++    camera_shutter_fraction,
++    interpolate_camera_poses,
++    project_camera_model,
++    project_world_camera,
++    scale_ftheta_calibration,
++)
++
++logger = logging.getLogger(__name__)
++OBJECT_CLASS_NODE_MAPPING = {
++    'Vehicle': ModelType.RigidNodes,
++    'Pedestrian': ModelType.SMPLNodes,
++    'Cyclist': ModelType.DeformableNodes,
++    'RigidObject': ModelType.RigidNodes,
++}
++
++
++class PhysicalAICameraData(CameraData):
++    def __init__(self, rectified_fov=None, **kwargs):
++        root = Path(kwargs['data_path'])
++        meta = json.loads((root / 'metadata.json').read_text())
++        cam_id = int(kwargs['cam_id'])
++        self.camera_metadata = meta['cameras'][str(cam_id)]
++        self.camera_metadata['camera_name'] = DATASETS_CONFIG['physicalai'][cam_id]['camera_name']
++        self.rectified_fov = rectified_fov
++        self._ray_cache = {}
++        self.dynamic_masks = self.human_masks = self.vehicle_masks = self.sky_masks = None
++        super().__init__(**kwargs)
++
++    def create_all_filelist(self):
++        super().create_all_filelist()
++        self.img_filepaths = np.array(
++            [str(Path(p).with_suffix('.png')) for p in self.img_filepaths]
++        )
++
++    @classmethod
++    def get_camera2worlds(
++        cls, data_path, cam_id, start_timestep, end_timestep, directory='camera_pose'
++    ):
++        root = Path(data_path)
++        anchor = np.linalg.inv(np.loadtxt(root / 'ego_pose' / f'{start_timestep:03d}.txt'))
++        return torch.from_numpy(
++            np.stack(
++                [
++                    anchor @ np.loadtxt(root / directory / f'{t:03d}_{cam_id}.txt')
++                    for t in range(start_timestep, end_timestep)
++                ]
++            )
++        ).float()
++
++    def load_calibrations(self):
++        root = Path(self.data_path)
++        self.ftheta_parameters = scale_ftheta_calibration(
++            json.loads((root / 'intrinsics' / f'{self.cam_id}.json').read_text()),
++            self.WIDTH,
++            self.HEIGHT,
++        )
++        self.shutter_type = self.ftheta_parameters.get('shutter_type', 'GLOBAL')
++        args = self.data_path, self.cam_id, self.start_timestep, self.end_timestep
++        self.cam_to_worlds = self.get_camera2worlds(*args)
++        self.cam_to_worlds_start = self.get_camera2worlds(*args, directory='camera_pose_start')
++        K = torch.eye(3)
++        K[:2, 2] = torch.tensor(self.ftheta_parameters['principal_point']) + 0.5
++        self.camera_model = 'ftheta'
++        self.rectification = None
++        if self.undistort:
++            fov = self.rectified_fov
++            if fov is None:
++                fov = min(100.0, np.degrees(float(self.ftheta_parameters['max_angle'])) * 1.6)
++            if not 0 < fov < 180:
++                raise ValueError('rectified_fov must lie between 0 and 180 degrees')
++            K[0, 0] = K[1, 1] = self.WIDTH / (2 * np.tan(np.radians(fov) / 2))
++            K[:2, 2] = torch.tensor([self.WIDTH / 2, self.HEIGHT / 2])
++            rays, _ = camera_model_rays(self.HEIGHT, self.WIDTH, K)
++            pixels, valid = project_camera_model(
++                rays, K, 'ftheta', ftheta_parameters=self.ftheta_parameters
++            )
++            valid &= (
++                (pixels[..., 0] >= 0.5)
++                & (pixels[..., 0] <= self.WIDTH - 0.5)
++                & (pixels[..., 1] >= 0.5)
++                & (pixels[..., 1] <= self.HEIGHT - 0.5)
++            )
++            self.rectification = (pixels.numpy().astype(np.float32) - 0.5, valid)
++            self.camera_model = 'pinhole'
++            # Rectification changes projection, not capture time. A global midpoint
++            # pose is an explicit approximation; native rolling shutter uses undistort=False.
++            midpoint = []
++            for start, end in zip(self.cam_to_worlds_start, self.cam_to_worlds):
++                rotation, origin = interpolate_camera_poses(start, end, 0.5)
++                pose = torch.eye(4)
++                pose[:3, :3] = rotation
++                pose[:3, 3] = origin
++                midpoint.append(pose)
++            self.cam_to_worlds = torch.stack(midpoint)
++            self.cam_to_worlds_start = self.cam_to_worlds.clone()
++            self.shutter_type = 'GLOBAL'
++        self.intrinsics = K.repeat(len(self.cam_to_worlds), 1, 1)
++        self.distortions = None
++
++    def _read(self, path, mask=False):
++        image = Image.open(path).convert('L' if mask else 'RGB')
++        pixels = np.asarray(
++            image.resize(
++                (self.WIDTH, self.HEIGHT),
++                Image.Resampling.NEAREST if mask else Image.Resampling.BILINEAR,
++            )
++        )
++        if self.rectification is not None:
++            grid, _ = self.rectification
++            pixels = cv2.remap(
++                pixels,
++                grid[..., 0],
++                grid[..., 1],
++                cv2.INTER_NEAREST if mask else cv2.INTER_LINEAR,
++                borderMode=cv2.BORDER_CONSTANT,
++            )
++        return torch.from_numpy(pixels.copy())
++
++    def load_images(self):
++        self.images = torch.stack([self._read(p) for p in self.img_filepaths]).float() / 255
++
++    def load_egocar_mask(self):
++        self.egocar_mask = None
++        self.invalid_masks = torch.stack(
++            [
++                self._read(
++                    Path(self.data_path) / 'invalid_masks' / f'{t:03d}_{self.cam_id}.png', True
++                )
++                > 0
++                for t in range(self.start_timestep, self.end_timestep)
++            ]
++        )
++        if self.rectification is not None:
++            self.invalid_masks |= ~self.rectification[1]
++
++    def load_dynamic_masks(self):
++        for name in ('dynamic', 'human', 'vehicle'):
++            paths = getattr(self, name + '_mask_filepaths')
++            setattr(
++                self, name + '_masks', torch.stack([self._read(p, True) > 0 for p in paths]).float()
++            )
++
++    def load_sky_masks(self):
++        self.sky_masks = torch.stack(
++            [self._read(p, True) > 0 for p in self.sky_mask_filepaths]
++        ).float()
++
++    def to(self, device):
++        super().to(device)
++        self.device = device
++        self.cam_to_worlds_start = self.cam_to_worlds_start.to(device)
++        self.invalid_masks = self.invalid_masks.to(device)
++        self._ray_cache.clear()
++        return self
++
++    def get_image(self, frame_idx):
++        image, camera = super().get_image(frame_idx)
++        height, width = int(camera['height']), int(camera['width'])
++        K = self.intrinsics[frame_idx].clone()
++        K[:2] *= self.downscale_factor
++        p = (
++            scale_ftheta_calibration(
++                self.ftheta_parameters, width, height, scale=self.downscale_factor
++            )
++            if self.camera_model == 'ftheta'
++            else None
++        )
++        key = height, width
++        if key not in self._ray_cache:
++            self._ray_cache[key] = camera_model_rays(
++                height, width, K, self.camera_model, ftheta_parameters=p
++            )
++        rays, valid = self._ray_cache[key]
++        start, end = self.cam_to_worlds_start[frame_idx], self.cam_to_worlds[frame_idx]
++        y, x = torch.meshgrid(
++            torch.arange(height, device=self.device) + 0.5,
++            torch.arange(width, device=self.device) + 0.5,
++            indexing='ij',
++        )
++        fraction = camera_shutter_fraction(
++            torch.stack((x, y), -1), width, height, self.shutter_type
++        )
++        rotation, origins = interpolate_camera_poses(start, end, fraction)
++        image['viewdirs'] = F.normalize(torch.einsum('...ij,...j->...i', rotation, rays), dim=-1)
++        image['origins'] = origins
++        image['direction_norm'] = torch.ones_like(rays[..., :1])
++        invalid = (
++            F.interpolate(
++                self.invalid_masks[frame_idx][None, None].float(),
++                scale_factor=self.downscale_factor, mode='nearest'
++            )[0, 0].bool()
++            | ~valid
++        )
++        image['egocar_masks'] = invalid.float()
++        image['valid_masks'] = ~invalid
++        camera.update(
++            intrinsics=K,
++            camera_model=self.camera_model,
++            ftheta_parameters=p,
++            camera_to_world=start,
++            camera_to_world_end=end,
++            shutter_type=self.shutter_type,
++        )
++        return image, camera
++
++    def project_points(self, world_points, frame_idx):
++        pixels, depth, valid = project_world_camera(
++            world_points,
++            self.cam_to_worlds_start[frame_idx],
++            self.cam_to_worlds[frame_idx],
++            self.intrinsics[frame_idx],
++            self.WIDTH,
++            self.HEIGHT,
++            self.camera_model,
++            ftheta_parameters=self.ftheta_parameters,
++            shutter_type=self.shutter_type,
++        )
++        selected = valid.nonzero().flatten()
++        uv = pixels[selected].long()
++        valid[selected] &= ~self.invalid_masks[frame_idx, uv[:, 1], uv[:, 0]]
++        return pixels, depth, valid
++
++
++class PhysicalAIPixelSource(ScenePixelSource):
++    def __init__(
++        self,
++        dataset_name,
++        pixel_data_config,
++        data_path,
++        start_timestep,
++        end_timestep,
++        device=torch.device('cpu'),
++    ):
++        super().__init__(dataset_name, pixel_data_config, device=device)
++        self.data_path, self.start_timestep, self.end_timestep = (
++            data_path,
++            start_timestep,
++            end_timestep,
++        )
++        self.available_cameras = [
++            int(i) for i in json.loads((Path(data_path) / 'metadata.json').read_text())['cameras']
++        ]
++        self.smpl_human_all = {}
++        self.load_data()
++
++    def load_cameras(self):
++        self._timesteps = torch.arange(self.start_timestep, self.end_timestep)
++        self.register_normalized_timestamps()
++        if self.end_timestep - self.start_timestep == 1:
++            self._normalized_time = torch.zeros_like(self._timesteps, dtype=torch.float32)
++            self._unique_normalized_timestamps = torch.zeros(1)
++        for index, cam_id in enumerate(self.camera_list):
++            if cam_id not in self.available_cameras:
++                raise ValueError(f'Camera {cam_id} is not present in this PhysicalAI scene')
++            camera = PhysicalAICameraData(
++                dataset_name=self.dataset_name,
++                data_path=self.data_path,
++                cam_id=cam_id,
++                start_timestep=self.start_timestep,
++                end_timestep=self.end_timestep,
++                load_dynamic_mask=self.data_cfg.load_dynamic_mask,
++                load_sky_mask=self.data_cfg.load_sky_mask,
++                downscale_when_loading=self.data_cfg.downscale_when_loading[index],
++                undistort=self.data_cfg.undistort,
++                rectified_fov=self.data_cfg.get('rectified_fov'),
++                buffer_downscale=self.buffer_downscale,
++                device=self.device,
++            )
++            camera.load_time(self.normalized_time)
++            camera.set_unique_ids(index, torch.arange(len(camera)) * self.num_cams + index)
++            self.camera_data[cam_id] = camera
++
++    def load_objects(self):
++        """
++        get ground truth bounding boxes of the dynamic objects
++
++        instances_info = {
++            "0": # simplified instance id
++                {
++                    "id": str,
++                    "class_name": str,
++                    "frame_annotations": {
++                        "frame_idx": List,
++                        "obj_to_world": List,
++                        "box_size": List,
++                },
++            ...
++        }
++        frame_instances = {
++            "0": # frame idx
++                List[int] # list of simplified instance ids
++            ...
++        }
++        """
++        instances_info_path = os.path.join(self.data_path, "instances", "instances_info.json")
++        frame_instances_path = os.path.join(self.data_path, "instances", "frame_instances.json")
++        with open(instances_info_path, "r") as f:
++            instances_info = json.load(f)
++        with open(frame_instances_path, "r") as f:
++            frame_instances = json.load(f)
++        # get pose of each instance at each frame
++        # shape (num_frames, num_instances, 4, 4)
++        num_instances = len(instances_info)
++        num_full_frames = len(frame_instances)
++        instances_pose = np.zeros((num_full_frames, num_instances, 4, 4))
++        instances_size = np.zeros((num_full_frames, num_instances, 3))
++        instances_true_id = np.arange(num_instances)
++        instances_model_types = np.ones(num_instances) * -1
++
++        ego_to_world_start = np.loadtxt(
++            os.path.join(self.data_path, "ego_pose", f"{self.start_timestep:03d}.txt")
++        )
++        for k, v in instances_info.items():
++            instances_model_types[int(k)] = OBJECT_CLASS_NODE_MAPPING[v["class_name"]]
++            for frame_idx, obj_to_world, box_size in zip(
++                v["frame_annotations"]["frame_idx"],
++                v["frame_annotations"]["obj_to_world"],
++                v["frame_annotations"]["box_size"],
++            ):
++                # the first ego pose as the origin of the world coordinate system.
++                obj_to_world = np.array(obj_to_world).reshape(4, 4)
++                obj_to_world = np.linalg.inv(ego_to_world_start) @ obj_to_world
++                instances_pose[frame_idx, int(k)] = np.array(obj_to_world)
++                instances_size[frame_idx, int(k)] = np.array(box_size)
++
++        # get frame valid instances
++        # shape (num_frames, num_instances)
++        per_frame_instance_mask = np.zeros((num_full_frames, num_instances))
++        for frame_idx, valid_instances in frame_instances.items():
++            per_frame_instance_mask[int(frame_idx), valid_instances] = 1
++
++        # select the frames that are in the range of start_timestep and end_timestep
++        instances_pose = torch.from_numpy(
++            instances_pose[self.start_timestep : self.end_timestep]
++        ).float()
++        instances_size = torch.from_numpy(
++            instances_size[self.start_timestep : self.end_timestep]
++        ).float()
++        instances_true_id = torch.from_numpy(instances_true_id).long()
++        instances_model_types = torch.from_numpy(instances_model_types).long()
++        per_frame_instance_mask = torch.from_numpy(
++            per_frame_instance_mask[self.start_timestep : self.end_timestep]
++        ).bool()
++
++        # filter out the instances that are not visible in selected frames
++        ins_frame_cnt = per_frame_instance_mask.sum(dim=0)
++        instances_pose = instances_pose[:, ins_frame_cnt > 0]
++        instances_size = instances_size[:, ins_frame_cnt > 0]
++        instances_true_id = instances_true_id[ins_frame_cnt > 0]
++        instances_model_types = instances_model_types[ins_frame_cnt > 0]
++        per_frame_instance_mask = per_frame_instance_mask[:, ins_frame_cnt > 0]
++
++        # assign to the class
++        # (num_frames, num_instances, 4, 4)
++        self.instances_pose = instances_pose
++        # (num_instances, 3)
++        self.instances_size = instances_size.sum(0) / per_frame_instance_mask.sum(0).unsqueeze(-1)
++        # (num_frames, num_instances)
++        self.per_frame_instance_mask = per_frame_instance_mask
++        # (num_instances)
++        self.instances_true_id = instances_true_id
++        # (num_instances)
++        self.instances_model_types = instances_model_types
++
++        if self.data_cfg.load_smpl:
++            # Collect camera-to-world matrices for all available cameras
++            cam_to_worlds = {}
++            for cam_id in self.available_cameras:
++                cam_to_worlds[cam_id] = PhysicalAICameraData.get_camera2worlds(
++                    self.data_path, str(cam_id), self.start_timestep, self.end_timestep
++                )
++
++            # load SMPL parameters
++            smpl_dict = joblib.load(os.path.join(self.data_path, "humanpose", "smpl.pkl"))
++            frame_num = self.end_timestep - self.start_timestep
++
++            smpl_human_all = {}
++            for fi in tqdm(range(self.start_timestep, self.end_timestep), desc="Loading SMPL"):
++                for instance_id, ins_smpl in smpl_dict.items():
++                    if instance_id not in smpl_human_all:
++                        smpl_human_all[instance_id] = {
++                            "smpl_quats": torch.zeros((frame_num, 24, 4), dtype=torch.float32),
++                            "smpl_trans": torch.zeros((frame_num, 3), dtype=torch.float32),
++                            "smpl_betas": torch.zeros((frame_num, 10), dtype=torch.float32),
++                            "frame_valid": torch.zeros((frame_num), dtype=torch.bool),
++                        }
++                        smpl_human_all[instance_id]["smpl_quats"][:, :, 0] = 1.0
++                    if ins_smpl["valid_mask"][fi]:
++                        betas = ins_smpl["smpl"]["betas"][fi]
++                        smpl_human_all[instance_id]["smpl_betas"][fi - self.start_timestep] = betas
++
++                        body_pose = ins_smpl["smpl"]["body_pose"][fi]
++                        smpl_orient = ins_smpl["smpl"]["global_orient"][fi]
++                        cam_depend = ins_smpl["selected_cam_idx"][fi].item()
++
++                        c2w = cam_to_worlds[cam_depend][fi - self.start_timestep]
++                        world_orient = c2w[:3, :3].to(smpl_orient.device) @ smpl_orient.squeeze()
++                        smpl_quats = matrix_to_quaternion(
++                            torch.cat([world_orient[None, ...], body_pose], dim=0)
++                        )
++
++                        ii = instances_info[str(instance_id)]['frame_annotations'][
++                            "frame_idx"
++                        ].index(fi)
++                        o2w = np.array(
++                            instances_info[str(instance_id)]['frame_annotations']["obj_to_world"][
++                                ii
++                            ]
++                        )
++                        o2w = torch.from_numpy(np.linalg.inv(ego_to_world_start) @ o2w)
++                        # box_size = instances_info[str(instance_id)]['frame_annotations']["box_size"][ii]
++
++                        smpl_human_all[instance_id]["smpl_quats"][
++                            fi - self.start_timestep
++                        ] = smpl_quats
++                        smpl_human_all[instance_id]["smpl_trans"][fi - self.start_timestep] = o2w[
++                            :3, 3
++                        ]
++                        smpl_human_all[instance_id]["frame_valid"][fi - self.start_timestep] = True
++
++            self.smpl_human_all = smpl_human_all
++
++
++class PhysicalAILiDARSource(SceneLidarSource):
++    def __init__(
++        self, lidar_data_config, data_path, start_timestep, end_timestep, device=torch.device('cpu')
++    ):
++        super().__init__(lidar_data_config, device=device)
++        self.data_path = Path(data_path)
++        self.start_timestep, self.end_timestep = start_timestep, end_timestep
++        self.create_all_filelist()
++        self.load_data()
++
++    def create_all_filelist(self):
++        self.lidar_filepaths = [
++            self.data_path / 'lidar' / f'{t:03d}.bin'
++            for t in range(self.start_timestep, self.end_timestep)
++        ]
++
++    def load_calibrations(self):
++        anchor = np.linalg.inv(
++            np.loadtxt(self.data_path / 'ego_pose' / f'{self.start_timestep:03d}.txt')
++        )
++        self.lidar_to_worlds = torch.from_numpy(
++            np.stack(
++                [
++                    anchor @ np.loadtxt(self.data_path / 'lidar_pose' / f'{t:03d}.txt')
++                    for t in range(self.start_timestep, self.end_timestep)
++                ]
++            )
++        ).float()
++
++    def load_lidar(self):
++        origins, directions, ranges, timesteps = [], [], [], []
++        for index, path in enumerate(self.lidar_filepaths):
++            xyz = torch.from_numpy(np.fromfile(path, dtype=np.float32).reshape(-1, 4)[:, :3].copy())
++            distance = xyz.norm(dim=-1, keepdim=True)
++            valid = torch.isfinite(xyz).all(-1) & (distance[:, 0] > 1e-6)
++            xyz, distance = xyz[valid], distance[valid]
++            pose = self.lidar_to_worlds[index]
++            origins.append(pose[:3, 3].expand_as(xyz))
++            directions.append((xyz / distance) @ pose[:3, :3].T)
++            ranges.append(distance)
++            timesteps.append(torch.full((len(xyz),), index, dtype=torch.long))
++        if not origins or not sum(len(o) for o in origins):
++            raise ValueError('PhysicalAI scene has no valid LiDAR points')
++        self.origins = torch.cat(origins)
++        self.directions = torch.cat(directions)
++        self.ranges = torch.cat(ranges)
++        self._timesteps = torch.cat(timesteps)
++        self.register_normalized_timestamps()
++        if self.end_timestep - self.start_timestep == 1:
++            self._normalized_time = torch.zeros_like(self._timesteps, dtype=torch.float32)
++            self._unique_normalized_timestamps = torch.zeros(1)
++        self.visible_masks = torch.zeros(len(self.origins), dtype=torch.bool)
++        self.colors = torch.ones_like(self.origins)
++        self.flows = torch.zeros_like(self.origins)
++
++    def to(self, device):
++        super().to(device)
++        self.flows = self.flows.to(device)
++        return self
++        self.flows = torch.zeros_like(self.origins)
++
++    def to(self, device):
++        super().to(device)
++        self.flows = self.flows.to(device)
++        return self
+diff --git a/datasets/preprocess.py b/datasets/preprocess.py
+index 7b136a6aa1a3ccc591fd927f2a0b026234484d6f..961fbcf89617ddbbc829d6853a7347075906576f 100644
+--- a/datasets/preprocess.py
++++ b/datasets/preprocess.py
+@@ -8,11 +8,12 @@ if __name__ == "__main__":
+ 
+     This script facilitates the preprocessing of datasets:
+     - Waymo
++    - PandaSet
+     - Argoverse
+     - NuScenes
+     - KITTI
+-    - NUPlan
+-    - PandaSet
++    - NuPlan
++    - PhysicalAI
+ 
+     Usage:
+     ------
+@@ -244,8 +245,18 @@ if __name__ == "__main__":
+             process_id_list=scene_ids_list,
+             workers=args.workers,
+         )
++    elif args.dataset == "physicalai":
++        from datasets.physicalai.physicalai_preprocess import PhysicalAIProcessor
++
++        dataset_processor = PhysicalAIProcessor(
++            load_dir=args.data_root,
++            save_dir=args.target_dir,
++            process_keys=args.process_keys,
++            process_id_list=scene_ids_list,
++            workers=args.workers,
++        )
+     else:
+-        raise ValueError(f"Unknown dataset {args.dataset}, please choose from waymo, pandaset, argoverse, nuscenes, kitti, nuplan")
++        raise ValueError(f"Unknown dataset {args.dataset}, please choose from waymo, pandaset, argoverse, nuscenes, kitti, nuplan, physicalai")
+ 
+     if args.scene_ids is not None and args.workers == 1:
+         for scene_id in args.scene_ids:
+diff --git a/datasets/tools/extract_masks.py b/datasets/tools/extract_masks.py
+index 25c8fe8eb5a9631751ff7d36216d5aa00e022db0..8aecc5ef3073c3509499f5fc715f5e4ca168c678 100644
+--- a/datasets/tools/extract_masks.py
++++ b/datasets/tools/extract_masks.py
+@@ -106,7 +106,7 @@ if __name__ == "__main__":
+         # parse the split file
+         split_file = open(args.split_file, "r").readlines()[1:]
+         # NOTE: small hack here, to be refined in the futher (TODO)
+-        if "kitti" in args.split_file or "nuplan" in args.split_file:
++        if "kitti" in args.split_file or "nuplan" in args.split_file or "physicalai" in args.split_file:
+             scene_ids_list = [line.strip().split(",")[0] for line in split_file]
+         else:
+             scene_ids_list = [int(line.strip().split(",")[0]) for line in split_file]
+diff --git a/datasets/tools/humanpose_process.py b/datasets/tools/humanpose_process.py
+index 2a48d60e14ea3264443ecc37f344c77efa20a2ed..2d0577f8992264df20be98e99686424cce8fc884 100644
+--- a/datasets/tools/humanpose_process.py
++++ b/datasets/tools/humanpose_process.py
+@@ -107,8 +107,10 @@ if __name__ == "__main__":
+         from datasets.kitti.kitti_human_utils import project_human_boxes, CAMERA_LIST
+     elif args.dataset == "nuplan":
+         from datasets.nuplan.nuplan_human_utils import project_human_boxes, CAMERA_LIST
++    elif args.dataset == "physicalai":
++        from datasets.physicalai.physicalai_human_utils import project_human_boxes, CAMERA_LIST
+     else:
+-        raise ValueError(f"Unknown dataset {args.dataset}, please choose from waymo, pandaset, argoverse, nuscenes, kitti, nuplan")
++        raise ValueError(f"Unknown dataset {args.dataset}, please choose from waymo, pandaset, argoverse, nuscenes, kitti, nuplan, physicalai")
+     
+     if args.scene_ids is not None:
+         scene_ids_list = args.scene_ids
+@@ -119,8 +121,8 @@ if __name__ == "__main__":
+             # Waymo, Pandaset, Argoverse, NuScenes
+             scene_ids_list = [int(line.strip().split(",")[0]) for line in split_file]
+         except:
+-            # KITTI
+-            scene_ids_list = [line.strip().split(" ")[0] for line in split_file]
++            # KITTI, PhysicalAI
++            scene_ids_list = [line.strip().split(",")[0].split(" ")[0] for line in split_file]
+     else:
+         scene_ids_list = np.arange(args.start_idx, args.start_idx + args.num_scenes)
+     
+diff --git a/datasets/waymo/waymo_preprocess.py b/datasets/waymo/waymo_preprocess.py
+index bed63e5881a1ae4d1a5f3a7c92f34721e1d84ce0..f65451cabab322b9df83a6d15d9f5f662100955e 100644
+--- a/datasets/waymo/waymo_preprocess.py
++++ b/datasets/waymo/waymo_preprocess.py
+@@ -26,6 +26,7 @@ from .waymo_utils import (
+     parse_range_image_flow_and_camera_projection,
+     convert_range_image_to_point_cloud_flow,
+     project_vehicle_to_image,
++    camera_exposure_poses,
+     get_ground_np
+ )
+ 
+@@ -341,6 +342,19 @@ class WaymoProcessor(object):
+             pose,
+         )
+ 
++        # Keep ego_pose for LiDAR/objects; export per-camera exposure poses separately.
++        scene_dir = os.path.join(self.save_dir, str(file_idx).zfill(3))
++        for folder in ('camera_pose_start', 'camera_pose', 'camera_timing'):
++            os.makedirs(os.path.join(scene_dir, folder), exist_ok=True)
++        calibrations = {camera.name: camera for camera in frame.context.camera_calibrations}
++        for image in frame.images:
++            start, end, timing = camera_exposure_poses(image, calibrations[image.name])
++            stem = f'{frame_idx:03d}_{image.name - 1}'
++            np.savetxt(os.path.join(scene_dir, 'camera_pose_start', stem + '.txt'), start)
++            np.savetxt(os.path.join(scene_dir, 'camera_pose', stem + '.txt'), end)
++            with open(os.path.join(scene_dir, 'camera_timing', stem + '.json'), 'w') as stream:
++                json.dump(timing, stream, indent=2)
++
+     def save_dynamic_mask(self, frame, file_idx, frame_idx, class_valid='all'):
+         assert class_valid in ['all', 'human', 'vehicle'], "Invalid class valid"
+         if class_valid == 'all':
+@@ -413,7 +427,7 @@ class WaymoProcessor(object):
+ 
+                 # Project box corners from vehicle coordinates onto the image.
+                 projected_corners = project_vehicle_to_image(
+-                    frame.pose, calibration, corners
++                    frame.pose, calibration, corners, camera_image=img
+                 )
+                 u, v, ok = projected_corners.transpose()
+                 ok = ok.astype(bool)
 diff --git a/datasets/waymo/waymo_sourceloader.py b/datasets/waymo/waymo_sourceloader.py
-index 1f74170..402c5b2 100644
+index 1f74170f9665f64f7a1b8e4ba2bfcea50ae3550c..c3e8fb09a378a7c00e3d6e4554d92a8769e40e2d 100644
 --- a/datasets/waymo/waymo_sourceloader.py
 +++ b/datasets/waymo/waymo_sourceloader.py
-@@ -168,6 +168,7 @@ class WaymoPixelSource(ScenePixelSource):
+@@ -1,4 +1,5 @@
+ from typing import Dict
++from pathlib import Path
+ import logging
+ import os
+ import json
+@@ -11,10 +12,18 @@ import torch
+ from torch import Tensor
+ 
+ from pytorch3d.transforms import matrix_to_quaternion
++from datasets.dataset_meta import DATASETS_CONFIG
+ from datasets.base.scene_dataset import ModelType
+ from datasets.base.lidar_source import SceneLidarSource
+ from datasets.base.pixel_source import ScenePixelSource, CameraData
+ 
++from utils.geometry import (
++    camera_model_rays,
++    camera_shutter_fraction,
++    interpolate_camera_poses,
++    project_world_camera,
++)
++
+ logger = logging.getLogger()
+ 
+ # define each class's node type
+@@ -42,6 +51,21 @@ AVAILABLE_CAM_LIST = [0, 1, 2, 3, 4]
+ 
+ class WaymoCameraData(CameraData):
+     def __init__(self, **kwargs):
++        self._capture = None
++        self._ray_cache = {}
++        timing_path = (
++            Path(kwargs['data_path'])
++            / 'camera_timing'
++            / f"{kwargs['start_timestep']:03d}_{kwargs['cam_id']}.json"
++        )
++        if timing_path.exists():
++            resolution = json.loads(timing_path.read_text())['resolution']
++            if len(resolution) != 2 or min(resolution) <= 0:
++                raise ValueError('Invalid Waymo camera resolution')
++            self.camera_metadata = {
++                'camera_name': DATASETS_CONFIG['waymo'][kwargs['cam_id']]['camera_name'],
++                'original_size': list(reversed(resolution)),
++            }
+         super().__init__(**kwargs)
+         
+     def load_calibrations(self):
+@@ -51,8 +75,7 @@ class WaymoCameraData(CameraData):
+         """
+         # load camera intrinsics
+         # 1d Array of [f_u, f_v, c_u, c_v, k{1, 2}, p{1, 2}, k{3}].
+-        # ====!! we did not use distortion parameters for simplicity !!====
+-        # to be improved!!
++        # Native images use these coefficients in rays, projection and rendering.
+         intrinsic = np.loadtxt(
+             os.path.join(self.data_path, "intrinsics", f"{self.cam_id}.txt")
+         )
+@@ -107,6 +130,166 @@ class WaymoCameraData(CameraData):
+         self.intrinsics = torch.from_numpy(np.stack(intrinsics, axis=0)).float()
+         self.distortions = torch.from_numpy(np.stack(distortions, axis=0)).float()
+         self.cam_to_worlds = torch.from_numpy(np.stack(cam_to_worlds, axis=0)).float()
++        self._capture = self._read_capture_poses(
++            self.data_path, self.cam_id, self.start_timestep, self.end_timestep
++        )
++        if self._capture is not None:
++            starts, ends, timings = self._capture
++            if any(t['resolution'] != list(self.original_size[::-1]) for t in timings):
++                raise ValueError('Waymo camera timing resolution does not match image metadata')
++            self.cam_to_worlds = self._midpoint_poses(starts, ends)
++        elif not self.undistort:
++            raise ValueError(
++                'Native Waymo needs camera timing/poses; rerun preprocessing with --process_keys pose'
++            )
++
++    @staticmethod
++    def _read_capture_poses(data_path, cam_id, start_timestep, end_timestep):
++        root = Path(data_path)
++        if not (root / 'camera_timing').exists():
++            return None
++        anchor = np.linalg.inv(np.loadtxt(root / 'ego_pose' / f'{start_timestep:03d}.txt'))
++        starts, ends, timings = [], [], []
++        for t in range(start_timestep, end_timestep):
++            stem = f'{t:03d}_{cam_id}'
++            paths = [
++                root / 'camera_pose_start' / (stem + '.txt'),
++                root / 'camera_pose' / (stem + '.txt'),
++                root / 'camera_timing' / (stem + '.json'),
++            ]
++            if not all(path.exists() for path in paths):
++                raise ValueError(
++                    'Incomplete Waymo camera timing/poses; rerun preprocessing with --process_keys pose'
++                )
++            starts.append(anchor @ np.loadtxt(paths[0]))
++            ends.append(anchor @ np.loadtxt(paths[1]))
++            timing = json.loads(paths[2].read_text())
++            if (
++                timing.get('pose_convention')
++                != 'OpenCV camera-to-world at image-edge exposure centers'
++            ):
++                raise ValueError('Unknown Waymo camera timing convention; reprocess this scene')
++            if timing.get('shutter_type') not in (
++                'GLOBAL',
++                'ROLLING_TOP_TO_BOTTOM',
++                'ROLLING_BOTTOM_TO_TOP',
++                'ROLLING_LEFT_TO_RIGHT',
++                'ROLLING_RIGHT_TO_LEFT',
++            ):
++                raise ValueError('Unknown Waymo shutter direction')
++            timings.append(timing)
++        return (
++            torch.from_numpy(np.stack(starts)).float(),
++            torch.from_numpy(np.stack(ends)).float(),
++            timings,
++        )
++
++    @staticmethod
++    def _midpoint_poses(starts, ends):
++        poses = []
++        for start, end in zip(starts, ends):
++            rotation, origin = interpolate_camera_poses(start, end, 0.5)
++            pose = torch.eye(4, device=start.device, dtype=start.dtype)
++            pose[:3, :3], pose[:3, 3] = rotation, origin
++            poses.append(pose)
++        return torch.stack(poses)
++
++    def _capture_endpoints(self, frame_idx, width, height):
++        if self.undistort or self._capture is None:
++            pose = self.cam_to_worlds[frame_idx]
++            return pose, pose, 'GLOBAL'
++        starts, ends, timings = self._capture
++        shutter = timings[frame_idx]['shutter_type']
++        if shutter == 'GLOBAL':
++            pose = self.cam_to_worlds[frame_idx]
++            return pose, pose, shutter
++        size = height if shutter in ('ROLLING_TOP_TO_BOTTOM', 'ROLLING_BOTTOM_TO_TOP') else width
++        # Waymo timing is defined at image edges; gsplat endpoints refer to the
++        # first/last pixel centers. Adjust at every training/render resolution.
++        fraction = starts.new_tensor([0.5 / size, 1 - 0.5 / size])
++        rotation, origin = interpolate_camera_poses(starts[frame_idx], ends[frame_idx], fraction)
++        poses = torch.eye(4, device=starts.device).repeat(2, 1, 1)
++        poses[:, :3, :3], poses[:, :3, 3] = rotation, origin
++        return poses[0], poses[1], shutter
++
++    def to(self, device):
++        super().to(device)
++        if self._capture is not None:
++            start, end, timings = self._capture
++            self._capture = start.to(device), end.to(device), timings
++        self._ray_cache.clear()
++        return self
++
++    def get_image(self, frame_idx):
++        image, camera = super().get_image(frame_idx)
++        if self.undistort:
++            return image, camera
++        height, width = int(camera['height']), int(camera['width'])
++        K = self.intrinsics[frame_idx].clone()
++        K[0] *= width / self.WIDTH
++        K[1] *= height / self.HEIGHT
++        distortion = self.distortions[frame_idx]
++        radial = torch.cat((distortion[[0, 1, 4]], distortion.new_zeros(3)))
++        tangential = distortion[[2, 3]]
++        key = height, width
++        if key not in self._ray_cache:
++            self._ray_cache[key] = camera_model_rays(
++                height, width, K, 'pinhole', radial, tangential_coeffs=tangential
++            )
++        rays, valid = self._ray_cache[key]
++        start, end, shutter = self._capture_endpoints(frame_idx, width, height)
++        y, x = torch.meshgrid(
++            torch.arange(height, device=K.device) + 0.5,
++            torch.arange(width, device=K.device) + 0.5,
++            indexing='ij',
++        )
++        fraction = camera_shutter_fraction(torch.stack((x, y), -1), width, height, shutter)
++        rotation, origin = interpolate_camera_poses(start, end, fraction)
++        image['origins'] = origin
++        image['viewdirs'] = torch.nn.functional.normalize(
++            torch.einsum('...ij,...j->...i', rotation, rays), dim=-1
++        )
++        image['direction_norm'] = 1 / rays[..., 2:].clamp_min(1e-8)
++        invalid = ~valid
++        if 'egocar_masks' in image:
++            invalid = invalid | image['egocar_masks'].bool()
++        image['egocar_masks'] = invalid.float()
++        image['valid_masks'] = ~invalid
++        camera.update(
++            intrinsics=K,
++            camera_model='pinhole',
++            radial_coeffs=radial,
++            tangential_coeffs=tangential,
++            camera_to_world=start,
++            camera_to_world_end=end,
++            shutter_type=shutter,
++        )
++        return image, camera
++
++    def project_points(self, points, frame_idx):
++        start, end, shutter = self._capture_endpoints(frame_idx, self.WIDTH, self.HEIGHT)
++        radial = tangential = None
++        if not self.undistort:
++            distortion = self.distortions[frame_idx]
++            radial = torch.cat((distortion[[0, 1, 4]], distortion.new_zeros(3)))
++            tangential = distortion[[2, 3]]
++        pixels, depth, valid = project_world_camera(
++            points,
++            start,
++            end,
++            self.intrinsics[frame_idx],
++            self.WIDTH,
++            self.HEIGHT,
++            'pinhole',
++            radial_coeffs=radial,
++            tangential_coeffs=tangential,
++            shutter_type=shutter,
++        )
++        if self.egocar_mask is not None:
++            selected = valid.nonzero().flatten()
++            uv = pixels[selected].long()
++            valid[selected] &= ~self.egocar_mask[uv[:, 1], uv[:, 0]].bool()
++        return pixels, depth, valid
+ 
+     @classmethod
+     def get_camera2worlds(cls, data_path: str, cam_id: str, start_timestep: int, end_timestep: int) -> torch.Tensor:
+@@ -122,6 +305,9 @@ class WaymoCameraData(CameraData):
+         Returns:
+             torch.Tensor: Camera-to-world matrices of shape (num_frames, 4, 4).
+         """
++        capture = cls._read_capture_poses(data_path, cam_id, start_timestep, end_timestep)
++        if capture is not None:
++            return cls._midpoint_poses(capture[0], capture[1])
+         # Load camera extrinsics
+         cam_to_ego = np.loadtxt(os.path.join(data_path, "extrinsics", f"{cam_id}.txt"))
+         cam_to_ego = cam_to_ego @ OPENCV2DATASET
+@@ -168,6 +354,7 @@ class WaymoPixelSource(ScenePixelSource):
                  end_timestep=self.end_timestep,
                  load_dynamic_mask=self.data_cfg.load_dynamic_mask,
                  load_sky_mask=self.data_cfg.load_sky_mask,
@@ -467,8 +2531,362 @@ index 1f74170..402c5b2 100644
                  downscale_when_loading=self.data_cfg.downscale_when_loading[idx],
                  undistort=self.data_cfg.undistort,
                  buffer_downscale=self.buffer_downscale,
+diff --git a/datasets/waymo/waymo_utils.py b/datasets/waymo/waymo_utils.py
+index 65427b9357e0f00b891f5ba01cec2bb3a4e9aad4..bbf55b46273f99f36f1d5763873721e80b1b2a3b 100644
+--- a/datasets/waymo/waymo_utils.py
++++ b/datasets/waymo/waymo_utils.py
+@@ -14,8 +14,69 @@ import tensorflow as tf
+ from waymo_open_dataset.utils import range_image_utils, transform_utils
+ from waymo_open_dataset.wdl_limited.camera.ops import py_camera_model_ops
+ 
+-def project_vehicle_to_image(vehicle_pose, calibration, points):
+-    """Projects from vehicle coordinate system to image with global shutter.
++def camera_exposure_poses(image, calibration):
++    """OpenCV camera poses at the edges of the rolling readout (exposure centers).
++
++    Waymo supplies vehicle pose and world-frame linear/angular velocity at
++    pose_timestamp. Extrapolate that pose, then apply the fixed camera extrinsic.
++    See waymo_open_dataset/dataset.proto for timing and velocity definitions.
++    """
++    from scipy.spatial.transform import Rotation
++
++    directions = {
++        1: 'ROLLING_TOP_TO_BOTTOM',
++        2: 'ROLLING_LEFT_TO_RIGHT',
++        3: 'ROLLING_BOTTOM_TO_TOP',
++        4: 'ROLLING_RIGHT_TO_LEFT',
++        5: 'GLOBAL',
++    }
++    direction = directions.get(calibration.rolling_shutter_direction)
++    if direction is None:
++        raise ValueError('Waymo camera has unknown rolling-shutter direction')
++    vehicle = np.asarray(image.pose.transform, dtype=np.float64).reshape(4, 4)
++    extrinsic = np.asarray(calibration.extrinsic.transform, dtype=np.float64).reshape(4, 4)
++    opencv_to_waymo = np.array([[0, 0, 1, 0], [-1, 0, 0, 0], [0, -1, 0, 0], [0, 0, 0, 1]])
++    timestamp = float(image.pose_timestamp)
++    linear = np.array([image.velocity.v_x, image.velocity.v_y, image.velocity.v_z])
++    angular = np.array([image.velocity.w_x, image.velocity.w_y, image.velocity.w_z])
++    if direction == 'GLOBAL':
++        start_time = end_time = timestamp
++    else:
++        start_time = float(image.camera_trigger_time) + float(image.shutter) / 2
++        end_time = float(image.camera_readout_done_time) - float(image.shutter) / 2
++        if image.shutter < 0 or end_time < start_time or image.camera_trigger_time <= 0:
++            raise ValueError('Waymo camera has invalid exposure/readout timing')
++        if not image.HasField('pose_timestamp') or not image.HasField('velocity'):
++            raise ValueError('Waymo rolling-shutter camera is missing pose timing or velocity')
++    if not (
++        np.isfinite(vehicle).all()
++        and np.isfinite(extrinsic).all()
++        and np.isfinite(linear).all()
++        and np.isfinite(angular).all()
++        and np.isfinite([start_time, end_time, timestamp]).all()
++    ):
++        raise ValueError('Waymo camera has nonfinite pose/timing data')
++
++    def at_time(t):
++        dt = t - timestamp
++        pose = vehicle.copy()
++        pose[:3, :3] = Rotation.from_rotvec(angular * dt).as_matrix() @ vehicle[:3, :3]
++        pose[:3, 3] += linear * dt
++        return pose @ extrinsic @ opencv_to_waymo
++
++    timing = {
++        'shutter_type': direction,
++        'pose_timestamp': timestamp,
++        'start_timestamp': start_time,
++        'end_timestamp': end_time,
++        'resolution': [int(calibration.width), int(calibration.height)],
++        'pose_convention': 'OpenCV camera-to-world at image-edge exposure centers',
++    }
++    return at_time(start_time), at_time(end_time), timing
++
++
++def project_vehicle_to_image(vehicle_pose, calibration, points, camera_image=None):
++    """Project vehicle points, using recorded rolling shutter when supplied.
+ 
+     Arguments:
+       vehicle_pose: Vehicle pose transform from vehicle into world coordinate
+@@ -34,8 +95,7 @@ def project_vehicle_to_image(vehicle_pose, calibration, points):
+         cx, cy, cz, _ = np.matmul(pose_matrix, [*point, 1])
+         world_points[i] = (cx, cy, cz)
+ 
+-    # Populate camera image metadata. Velocity and latency stats are filled with
+-    # zeroes.
++    # Legacy callers use a single pose; raw preprocessing supplies camera timing.
+     extrinsic = tf.reshape(
+         tf.constant(list(calibration.extrinsic.transform), dtype=tf.float32), [4, 4]
+     )
+@@ -44,11 +104,25 @@ def project_vehicle_to_image(vehicle_pose, calibration, points):
+         [
+             calibration.width,
+             calibration.height,
+-            dataset_pb2.CameraCalibration.GLOBAL_SHUTTER,
++            (
++                calibration.rolling_shutter_direction
++                if camera_image is not None
++                else dataset_pb2.CameraCalibration.GLOBAL_SHUTTER
++            ),
+         ],
+         dtype=tf.int32,
+     )
+     camera_image_metadata = list(vehicle_pose.transform) + [0.0] * 10
++    if camera_image is not None:
++        v = camera_image.velocity
++        camera_image_metadata = list(camera_image.pose.transform) + [
++            v.v_x, v.v_y, v.v_z,
++            v.w_x, v.w_y, v.w_z,
++            camera_image.pose_timestamp,
++            camera_image.shutter,
++            camera_image.camera_trigger_time,
++            camera_image.camera_readout_done_time,
++        ]
+ 
+     # Perform projection and return projected image coordinates (u, v, ok).
+     return py_camera_model_ops.world_to_image(
+diff --git a/docs/PhysicalAI.md b/docs/PhysicalAI.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..ace1cfb448a0eb665b7cf2d3530f90587a532668
+--- /dev/null
++++ b/docs/PhysicalAI.md
+@@ -0,0 +1,201 @@
++# Preparing PhysicalAI Dataset
++
++PhysicalAI is loaded by the regular `DrivingDataset`, using the same raw /
++processed directory structure and entry points as the other DriveStudio datasets.
++This integration accepts **PhysicalAI Autonomous Vehicles in NCore V4 format**.
++The larger original PhysicalAI release must first be converted to NCore with
++[NVIDIA's converter](https://github.com/NVIDIA/ncore); it is not the same input format.
++
++The processed scene always contains native FTheta images. In
++`configs/datasets/physicalai/7cams.yaml`, `data.pixel_source.undistort: False` selects native
++training; set it to `True` to rectify images and masks to pinhole geometry at
++load time. Processing never requires a NuRec model, pretrained scene, or
++intermediate camera bundle.
++
++Run the commands below from the repository root.
++
++## 1. Register on Hugging Face
++
++#### Sign Up for a Hugging Face Account and Install the CLI
++
++Sign in to Hugging Face and accept the
++[PhysicalAI AV NCore dataset agreement](https://huggingface.co/datasets/nvidia/PhysicalAI-Autonomous-Vehicles-NCore).
++Authenticate locally using your own read token. The dataset license is separate
++from this code's license; do not redistribute downloaded/processed data with the
++repository. Permission to publish dataset-derived media is not implied.
++
++```shell
++pip install "huggingface_hub>=0.34,<1.0"
++hf auth login
++```
++
++#### Set Up the Data Directory
++
++```shell
++# Create the data directory or create a symbolic link to the data directory
++mkdir -p ./data/physicalai/raw
++mkdir -p ./data/physicalai/processed
++```
++
++## 2. Download the raw data
++
++To download the full seven-camera demo clip, execute:
++
++```shell
++hf download nvidia/PhysicalAI-Autonomous-Vehicles-NCore \
++    --repo-type dataset \
++    --include 'clips/000da9de-0ee5-465a-9a2d-e7e91d3016bb/*' \
++    --local-dir data/physicalai/raw
++```
++
++For another clip, replace the UUID in `--include`. Leave the `.itar` archives
++intact; the NCore SDK reads them directly.
++
++## 3. Preprocess the data
++
++#### Install the NCore Development Toolkit
++
++Install the NCore SDK in the existing DriveStudio environment:
++
++```shell
++pip install nvidia-ncore==19.8.0 zarr==2.17.1 numcodecs==0.12.1
++```
++
++Zarr and Numcodecs are pinned to versions compatible with the existing NumPy
++installation. NCore is needed only for preprocessing, not training or rendering.
++The preprocessor handles NCore's FTheta enum annotation issue on Python 3.9.
++
++#### Running the preprocessing script
++
++To preprocess the demo clip, use the following command. Scene `0` selects
++the demo when it is the only clip in the raw folder:
++
++```shell
++# export PYTHONPATH=\path\to\project
++python datasets/preprocess.py \
++    --data_root data/physicalai/raw \
++    --target_dir data/physicalai/processed \
++    --dataset physicalai \
++    --scene_ids 0 \
++    --workers 1 \
++    --process_keys images lidar calib pose dynamic_masks objects
++```
++
++The extracted data will be stored in `data/physicalai/processed`.
++
++Scene indices refer to the lexicographically sorted `pai_*.json` files under the
++raw root. `metadata.json` records the source clip, selected camera frames and
++exact timestamps. Keep that mapping when adding more downloaded clips. To use
++stable UUID scene names instead, pass a `--split_file` CSV with a header and one
++clip UUID per row; those scenes are written under their UUID rather than `000`.
++The downstream mask/pose tools also support `--split_file` scene lists. Include
++`physicalai` in the split-file path (for example, `physicalai_demo.csv`) so the
++mask tool preserves UUID scene IDs as strings.
++
++Processing covers the full clip, sampling every third front-wide camera frame
++(approximately 10 Hz from a 30 Hz source), and preserves the original image
++resolution and lens projection. No PhysicalAI-specific preprocessing flags are
++needed. Select training frame ranges with `data.start_timestep` /
++`data.end_timestep` and loading resolution with
++`data.pixel_source.downscale_when_loading` in the existing dataset configuration.
++Other cameras are matched to the front-wide reference, retaining their actual
++exposure timestamps. Missing cameras are recorded; adjust the camera list in
++the dataset config accordingly.
++
++## 4. Extract Masks
++
++To generate:
++
++- **sky masks (required)**
++- fine dynamic masks (optional)
++
++#### Install `SegFormer` (Skip if already installed)
++
++Follow the [SegFormer installation instructions](./Waymo.md#install-segformer-skip-if-already-installed)
++to create the separate `segformer` Conda environment and download the pretrained
++`segformer.b5.1024x1024.city.160k.pth` checkpoint.
++
++#### Run Mask Extraction Script
++
++```shell
++conda activate segformer
++segformer_path=/pathtosegformer
++
++# export PYTHONPATH=\path\to\project
++python datasets/tools/extract_masks.py \
++    --data_root data/physicalai/processed \
++    --segformer_path=$segformer_path \
++    --checkpoint=$segformer_path/pretrained/segformer.b5.1024x1024.city.160k.pth \
++    --scene_ids 0 \
++    --process_dynamic_mask
++```
++
++Replace `/pathtosegformer` with the actual path to your SegFormer installation.
++The `--process_dynamic_mask` flag extracts fine dynamic masks along with sky masks.
++This writes `sky_masks/` and `fine_dynamic_masks/`. The shared mask tool supports
++the processed PNG images. The example dataset configuration expects sky and dynamic masks.
++
++## 5. Human Body Pose Processing
++
++#### Prerequisites
++
++For optional SMPL annotations, follow the [Human Pose Processing Guide](./HumanPose.md)
++to install the `4D-humans` environment and download the SMPL and estimator model assets.
++
++#### Run the Extraction Pipeline
++
++```shell
++conda activate 4D-humans
++
++# export PYTHONPATH=\path\to\project
++python datasets/tools/humanpose_process.py \
++    --dataset physicalai \
++    --data_root data/physicalai/processed \
++    --scene_ids 0 \
++    --fps 10 \
++    --save_temp
++```
++
++Add `--verbose` to save per-person box overlays under
++`humanpose/temp/Pedes_GTTracks/vis/images/<camera_id>/` and a video for each camera
++at `humanpose/temp/Pedes_GTTracks/vis/cam_<camera_id>.mp4`. Video playback uses
++`--fps`; frames without accepted pedestrian boxes are included without overlays.
++
++The PhysicalAI adapter projects pedestrian boxes using native calibration and
++exposure poses. The existing image-based human estimator is not retrained for
++fisheye images, so its predictions remain approximate. After the step creates
++`humanpose/smpl.pkl`, enable `data.pixel_source.load_smpl=true`. The default is
++false; pedestrians may instead be represented by the existing deformable nodes.
++
++## 6. Data Structure
++
++After completing preprocessing, the data directory should be organized as follows:
++
++```text
++ProjectPath/data/
++└── physicalai/
++    ├── raw/
++    │   └── clips/<clip_uuid>/
++    │       ├── pai_<clip_uuid>.json
++    │       ├── pai_<clip_uuid>.ncore4.zarr.itar
++    │       ├── pai_<clip_uuid>.ncore4-camera_*.zarr.itar
++    │       └── pai_<clip_uuid>.ncore4-lidar_*.zarr.itar
++    └── processed/
++        └── 000/
++            ├── metadata.json        # Source clip, camera calibration and frame mapping
++            ├── timestamps.txt       # Reference frame timestamps
++            ├── images/              # Native images: {timestep:03d}_{cam_id}.png
++            ├── lidar/               # LiDAR data: {timestep:03d}.bin
++            ├── lidar_pose/          # LiDAR sensor poses: {timestep:03d}.txt
++            ├── ego_pose/            # Ego vehicle poses: {timestep:03d}.txt
++            ├── extrinsics/          # Camera extrinsics: {cam_id}.txt
++            ├── intrinsics/          # FTheta calibration: {cam_id}.json
++            ├── camera_pose/         # Exposure-end poses: {timestep:03d}_{cam_id}.txt
++            ├── camera_pose_start/   # Exposure-start poses: {timestep:03d}_{cam_id}.txt
++            ├── invalid_masks/       # Invalid/ego masks: {timestep:03d}_{cam_id}.png
++            ├── sky_masks/           # Sky masks: {timestep:03d}_{cam_id}.png
++            ├── dynamic_masks/       # Coarse masks: category/{timestep:03d}_{cam_id}.png
++            ├── fine_dynamic_masks/  # (Optional) Fine masks: category/{timestep:03d}_{cam_id}.png
++            ├── instances/           # Instances' bounding boxes information
++            └── humanpose/           # (Optional) Human body poses: smpl.pkl
++```
+diff --git a/docs/Waymo.md b/docs/Waymo.md
+index 3b9df3e02dad33fd50d06f0ad25cfbc77e28d3e3..003d0705d0a5c49a566f0badb45924b4f2e2d3d5 100644
+--- a/docs/Waymo.md
++++ b/docs/Waymo.md
+@@ -47,8 +47,6 @@ Download the [scene flow version](https://console.cloud.google.com/storage/brows
+ 
+ </details>
+ 
+-</details>
+-
+ ## 3. Preprocess the data
+ After downloading the raw dataset, you'll need to preprocess this compressed data to extract and organize various components.
+ 
+@@ -84,6 +82,10 @@ python datasets/preprocess.py \
+ ```
+ The extracted data will be stored in the `data/waymo/processed` directory.
+ 
++The `pose` step also exports camera poses and timing for rolling-shutter rendering.
++For existing scenes, rerun preprocessing with `--process_keys pose` before native
++training. See the [3DGEER guide](../configs/3dgeer.md) for renderer settings.
++
+ ## 4. Extract Masks
+ 
+ To generate:
+@@ -186,6 +188,9 @@ ProjectPath/data/
+               │  ├──images/             # Images: {timestep:03d}_{cam_id}.jpg
+               │  ├──lidar/              # LiDAR data: {timestep:03d}.bin
+               │  ├──ego_pose/           # Ego vehicle poses: {timestep:03d}.txt
++              │  ├──camera_pose_start/  # Exposure-start camera poses: {timestep:03d}_{cam_id}.txt
++              │  ├──camera_pose/        # Exposure-end camera poses: {timestep:03d}_{cam_id}.txt
++              │  ├──camera_timing/      # Camera exposure timing: {timestep:03d}_{cam_id}.json
+               │  ├──extrinsics/         # Camera extrinsics: {cam_id}.txt
+               │  ├──intrinsics/         # Camera intrinsics: {cam_id}.txt
+               │  ├──sky_masks/          # Sky masks: {timestep:03d}_{cam_id}.png
 diff --git a/models/gaussians/basics.py b/models/gaussians/basics.py
-index faeb632..2f3b0b0 100644
+index faeb632012c85f63392a173a04a27ebfda4486a9..9ff8030afafc6c4f03b72971fa9efecaa1a9b516 100644
 --- a/models/gaussians/basics.py
 +++ b/models/gaussians/basics.py
 @@ -2,6 +2,7 @@ import math
@@ -530,29 +2948,52 @@ index faeb632..2f3b0b0 100644
  
  def projection_matrix(znear, zfar, fovx, fovy, device:Union[str,torch.device]="cpu"):
      """
+@@ -116,6 +148,13 @@ class dataclass_camera:
+     Ks: torch.Tensor
+     H: int
+     W: int
++    camera_model: str = "pinhole"
++    radial_coeffs: Optional[torch.Tensor] = None
++    tangential_coeffs: Optional[torch.Tensor] = None
++    ftheta_parameters: Optional[dict] = None
++    camtoworlds_end: Optional[torch.Tensor] = None
++    shutter_type: str = "GLOBAL"
++    render_mode: Optional[str] = None
+ 
+ @dataclass
+ class dataclass_gs:
 diff --git a/models/trainers/base.py b/models/trainers/base.py
-index 2f959bf..93ebf0d 100644
+index 2f959bf1776a4017b0ba6940a8c2bb04c620c28b..839998eddb1495c54892c7924eba7a0796f8df09 100644
 --- a/models/trainers/base.py
 +++ b/models/trainers/base.py
-@@ -15,6 +15,7 @@ import nerfview
+@@ -15,8 +15,10 @@ import nerfview
  from pytorch_msssim import SSIM
  from torchmetrics.image import PeakSignalNoiseRatio
  from torchmetrics.image.lpip import LearnedPerceptualImagePatchSimilarity
 +from tools.viewer import create_gsplat_viewer
  
  from models.gaussians.basics import *
++from utils.geometry import camera_shutter_fraction, interpolate_camera_poses
  
-@@ -237,10 +238,17 @@ class BasicTrainer(nn.Module):
+ logger = logging.getLogger()
+ 
+@@ -81,6 +83,7 @@ class BasicTrainer(nn.Module):
+         self.optim_general = optim
+         self.losses_dict = losses
+         self.render_cfg = render
++        self._init_renderer()
+         self.res_schedule = res_schedule
+         self.model_config = model_config
+         self.num_iters = self.optim_general.get("num_iters", 30000)
+@@ -237,10 +240,15 @@ class BasicTrainer(nn.Module):
                  from models.losses import safe_binary_cross_entropy
                  sky_opacity_loss_fn = lambda pred, gt: safe_binary_cross_entropy(pred, gt, limit=0.1, reduction="mean")
          self.sky_opacity_loss_fn = sky_opacity_loss_fn
 +
-+        depth_supervision = "depth" in self.losses_dict or "inverse_depth_smoothness" in self.losses_dict
-+        if depth_supervision and self.render_cfg.get("render_mode", "default") != "default":
-+            print("WARNING: 3DGUT/3DGEER training does not support depth. Turning off depth supervision")
-+            self.use_depth_supervision = False
-+        else:
-+            self.use_depth_supervision = depth_supervision
++        self.use_depth_supervision = (
++            self.losses_dict.get("depth") is not None
++            or self.losses_dict.get("inverse_depth_smoothness") is not None
++        )
          
          depth_loss_fn = None
          depth_loss_cfg = self.losses_dict.get("depth", None)
@@ -561,14 +3002,14 @@ index 2f959bf..93ebf0d 100644
              from models.losses import DepthLoss
              depth_loss_fn = DepthLoss(
                  loss_type=depth_loss_cfg.loss_type,
-@@ -277,13 +285,19 @@ class BasicTrainer(nn.Module):
-             self.tic = time.time()
+@@ -278,12 +286,23 @@ class BasicTrainer(nn.Module):
          
      def postprocess_per_train_step(self, step: int) -> None:
--        radii = self.info["radii"]
+         radii = self.info["radii"]
 -        if self.render_cfg.absgrad:
 -            grads = self.info["means2d"].absgrad.clone()
-+        radii = self.info["radii"].amax(dim=-1)
++        if radii.ndim == 3:
++            radii = radii.amax(dim=-1)
 +        if self.render_cfg.get("render_mode", "default") == "default":
 +            if self.render_cfg.absgrad:
 +                grads = self.info["means2d"].absgrad.clone()
@@ -576,6 +3017,9 @@ index 2f959bf..93ebf0d 100644
 +                grads = self.info["means2d"].grad.clone()
 +            grads[..., 0] *= self.info["width"] / 2.0 * self.render_cfg.batch_size
 +            grads[..., 1] *= self.info["height"] / 2.0 * self.render_cfg.batch_size
++        elif self.render_cfg.get("render_mode", "default") == "geer":
++            # GEER already accumulates absolute contributions and applies distance scaling.
++            grads = self.info["geer_gradient"].grad.clone()
          else:
 -            grads = self.info["means2d"].grad.clone()
 -        grads[..., 0] *= self.info["width"] / 2.0 * self.render_cfg.batch_size
@@ -587,35 +3031,180 @@ index 2f959bf..93ebf0d 100644
          
          for class_name in self.gaussian_classes.keys():
              gaussian_mask = self.pts_labels == self.gaussian_classes[class_name]
-@@ -312,7 +326,7 @@ class BasicTrainer(nn.Module):
+@@ -310,9 +329,12 @@ class BasicTrainer(nn.Module):
+             self.viewer.update(step, num_train_rays_per_step)
+     
      def update_visibility_filter(self) -> None:
++        radii = self.info["radii"]
++        if radii.ndim == 3:
++            radii = radii.amax(dim=-1)
          for class_name in self.gaussian_classes.keys():
              gaussian_mask = self.pts_labels == self.gaussian_classes[class_name]
 -            self.models[class_name].cur_radii = self.info["radii"][0, gaussian_mask]
-+            self.models[class_name].cur_radii = self.info["radii"].amax(dim=-1)[0, gaussian_mask]
++            self.models[class_name].cur_radii = radii[0, gaussian_mask]
  
      def process_camera(
          self,
-@@ -388,6 +402,12 @@ class BasicTrainer(nn.Module):
+@@ -329,12 +351,25 @@ class BasicTrainer(nn.Module):
+             camtoworlds = self.models["CamPose"](camtoworlds, image_ids)
+         
+         # collect camera information
++        if camera_infos.get("shutter_type", "GLOBAL") != "GLOBAL" and any(
++            key in self.models for key in ("CamPose", "CamPosePerturb")
++        ):
++            raise ValueError(
++                "Pose optimization for rolling-shutter cameras is unsupported; disable CamPose/CamPosePerturb"
++            )
+         camera_dict = dataclass_camera(
+             camtoworlds=camtoworlds,
+             camtoworlds_gt=camtoworlds_gt,
+             Ks=camera_infos["intrinsics"],
+-            H=camera_infos["height"],
+-            W=camera_infos["width"]
++            H=int(camera_infos["height"]),
++            W=int(camera_infos["width"]),
++            camera_model=camera_infos.get("camera_model", "pinhole"),
++            radial_coeffs=camera_infos.get("radial_coeffs"),
++            tangential_coeffs=camera_infos.get("tangential_coeffs"),
++            ftheta_parameters=camera_infos.get("ftheta_parameters"),
++            camtoworlds_end=camera_infos.get("camera_to_world_end"),
++            shutter_type=camera_infos.get("shutter_type", "GLOBAL"),
++            render_mode=camera_infos.get("render_mode"),
+         )
+         
+         return camera_dict
+@@ -382,21 +417,123 @@ class BasicTrainer(nn.Module):
+         
+         return gaussians
+     
++    def _init_renderer(self):
++        """Inspect the installed rasterizer once, before rendering any frames."""
++        import inspect
++
++        self._rasterization_parameters = set(inspect.signature(rasterization).parameters)
++        self._geer_supports_ftheta = False
++        if 'with_geer' in self._rasterization_parameters:
++            try:
++                from gsplat.geer.camera import get_camera_tanfov
++            except ImportError:
++                return
++            self._geer_supports_ftheta = (
++                'ftheta_coeffs' in inspect.signature(get_camera_tanfov).parameters
++            )
++
++    def camera_rasterization_kwargs(self, cam, mode):
++        """Build rasterizer arguments for this camera and render mode."""
++        if mode not in ('default', 'ut', 'geer'):
++            raise ValueError('render_mode must be default, ut or geer')
++        parameters = self._rasterization_parameters
++        extra = {}
++        if mode != 'default':
++            if self.render_cfg.packed:
++                raise ValueError('DriveStudio UT/GEER training requires packed=false')
++            extra.update(with_ut=mode == 'ut', with_eval3d=True)
++        if mode == 'geer':
++            extra['with_geer'] = True
++        if mode == 'default' and (
++            cam.radial_coeffs is not None or cam.tangential_coeffs is not None
++        ):
++            raise ValueError('Native lens distortion requires UT or GEER')
++        if cam.camera_model != 'pinhole' and mode == 'default':
++            raise ValueError('Native fisheye/FTheta cameras require UT or GEER')
++        if cam.camera_model not in ('pinhole', 'fisheye', 'ftheta'):
++            raise ValueError('Unsupported camera model: ' + cam.camera_model)
++        if cam.camera_model != 'pinhole' or 'camera_model' in parameters:
++            extra['camera_model'] = cam.camera_model
++        if cam.radial_coeffs is not None:
++            extra['radial_coeffs'] = cam.radial_coeffs[None]
++        if cam.tangential_coeffs is not None:
++            extra['tangential_coeffs'] = cam.tangential_coeffs[None]
++        if cam.camera_model == 'ftheta':
++            if mode == 'geer' and not self._geer_supports_ftheta:
++                raise RuntimeError(
++                    'GEER needs native FTheta culling support; install the compatible renderer described in docs/PhysicalAI.md'
++                )
++            if 'ftheta_coeffs' not in parameters:
++                raise RuntimeError('Installed gsplat lacks FTheta support; see docs/PhysicalAI.md')
++            from gsplat.cuda._wrapper import FThetaCameraDistortionParameters, FThetaPolynomialType
++
++            p = cam.ftheta_parameters
++            if p is None or list(p['resolution']) != [int(cam.W), int(cam.H)]:
++                raise ValueError('FTheta calibration must match the rendered image resolution')
++            extra['ftheta_coeffs'] = FThetaCameraDistortionParameters(
++                reference_poly=FThetaPolynomialType[str(p['reference_poly'])],
++                pixeldist_to_angle_poly=tuple(float(v) for v in p['pixeldist_to_angle_poly']),
++                angle_to_pixeldist_poly=tuple(float(v) for v in p['angle_to_pixeldist_poly']),
++                max_angle=float(p['max_angle']),
++                linear_cde=tuple(float(v) for v in p['linear_cde']),
++            )
++        if cam.shutter_type != 'GLOBAL':
++            if mode == 'default' or cam.camtoworlds_end is None:
++                raise ValueError('Rolling-shutter cameras require UT/GEER and exposure-end poses')
++            from gsplat.cuda._wrapper import RollingShutterType
++
++            extra['rolling_shutter'] = RollingShutterType[cam.shutter_type]
++            extra['viewmats_rs'] = torch.linalg.inv(cam.camtoworlds_end)[None]
++        missing = set(extra) - set(parameters)
++        if missing:
++            raise RuntimeError(
++                f'Installed gsplat lacks {sorted(missing)} for {mode}; see docs/PhysicalAI.md'
++            )
++        if self.render_cfg.get('tile_size') is not None:
++            extra['tile_size'] = int(self.render_cfg.tile_size)
++        return extra
++
+     def render_gaussians(
+         self,
+         gs: dataclass_gs,
          cam: dataclass_camera,
          **kwargs,
      ) -> Dict[str, torch.Tensor]:
-+        cfg_render_mode = self.render_cfg.get("render_mode", "default")
-+        if cfg_render_mode not in ("default", "ut", "geer"):
-+            raise ValueError(
-+                "render_cfg.render_mode must be one of 'default', 'ut', or 'geer'; "
-+                f"got {cfg_render_mode!r}"
-+            )
++        render_mode = cam.render_mode or self.render_cfg.get("render_mode", "default")
++        camera_kwargs = self.camera_rasterization_kwargs(cam, render_mode)
++        viewmat = torch.linalg.inv(cam.camtoworlds)
++        colors = gs.rgbs
++        native_depth = render_mode != "default" and self.use_depth_supervision
++        if render_mode != "default":
++            kwargs["render_mode"] = "RGB"
++        if native_depth:
++            # Rasterize world positions so depth can use each pixel's exposure pose.
++            colors = torch.cat((colors, gs.means), dim=-1)
++            # Separate RGB and XYZ passes limit register use with larger tiles.
++            kwargs["channel_chunk"] = 3
++            depth_axis, depth_offset = viewmat[2, :3], viewmat[2, 3]
++            if cam.shutter_type != "GLOBAL":
++                vertical = cam.shutter_type in ("ROLLING_TOP_TO_BOTTOM", "ROLLING_BOTTOM_TO_TOP")
++                size = cam.H if vertical else cam.W
++                coordinates = torch.arange(size, device=colors.device, dtype=colors.dtype) + 0.5
++                pixels = torch.stack((coordinates, coordinates), dim=-1)
++                fraction = camera_shutter_fraction(pixels, cam.W, cam.H, cam.shutter_type)
++                fraction = fraction[:, None] if vertical else fraction[None, :]
++                rotation, origin = interpolate_camera_poses(
++                    cam.camtoworlds, cam.camtoworlds_end, fraction
++                )
++                depth_axis = rotation[..., :, 2]
++                depth_offset = -(depth_axis * origin).sum(dim=-1)
      
          def render_fn(opaticy_mask=None, return_info=False):
              renders, alphas, info = rasterization(
-@@ -404,14 +424,21 @@ class BasicTrainer(nn.Module):
+                 means=gs.means,
+                 quats=gs.quats,
+                 scales=gs.scales,
+-                opacities=gs.opacities.squeeze()*opaticy_mask if opaticy_mask is not None else gs.opacities.squeeze(),
+-                colors=gs.rgbs,
+-                viewmats=torch.linalg.inv(cam.camtoworlds)[None, ...],  # [C, 4, 4]
++                opacities=gs.opacities.squeeze() *
++                opaticy_mask if opaticy_mask is not None else gs.opacities.squeeze(),
++                colors=colors,
++                viewmats=viewmat[None, ...],  # [C, 4, 4]
+                 Ks=cam.Ks[None, ...],  # [C, 3, 3]
+                 width=cam.W,
+                 height=cam.H,
+@@ -404,14 +541,24 @@ class BasicTrainer(nn.Module):
                  absgrad=self.render_cfg.absgrad,
                  sparse_grad=self.render_cfg.sparse_grad,
                  rasterize_mode="antialiased" if self.render_cfg.antialiased else "classic",
-+                with_ut=cfg_render_mode == "ut",
-+                with_geer=cfg_render_mode == "geer",
-+                with_eval3d=cfg_render_mode in ("ut", "geer"),
++                **camera_kwargs,
                  **kwargs,
              )
              renders = renders[0]
@@ -624,16 +3213,21 @@ index 2f959bf..93ebf0d 100644
              
 -            assert renders.shape[-1] == 4, f"Must render rgb, depth and alpha"
 -            rendered_rgb, rendered_depth = torch.split(renders, [3, 1], dim=-1)
-+            if cfg_render_mode == "default":
-+                assert renders.shape[-1] == 4, f"Must render rgb, depth and alpha"
++            if native_depth:
++                rendered_rgb, positions = torch.split(renders, [3, 3], dim=-1)
++                positions = positions / alphas[..., None].clamp_min(1e-8)
++                rendered_depth = (positions * depth_axis).sum(dim=-1) + depth_offset
++                rendered_depth = torch.where(alphas > 1e-8, rendered_depth, 0.0)[..., None]
++            elif renders.shape[-1] == 4:
 +                rendered_rgb, rendered_depth = torch.split(renders, [3, 1], dim=-1)
-+            else:
-+                assert renders.shape[-1] == 3, f"Must render rgb and alpha"
++            elif renders.shape[-1] == 3:
 +                rendered_rgb, rendered_depth = renders, None
++            else:
++                raise RuntimeError("Unexpected rasterizer output channels")
              
              if not return_info:
                  return torch.clamp(rendered_rgb, max=1.0), rendered_depth, alphas[..., None]
-@@ -422,12 +449,18 @@ class BasicTrainer(nn.Module):
+@@ -422,12 +569,24 @@ class BasicTrainer(nn.Module):
          rgb, depth, opacity, self.info = render_fn(return_info=True)
          results = {
              "rgb_gaussians": rgb,
@@ -643,18 +3237,24 @@ index 2f959bf..93ebf0d 100644
          
 +        if depth is not None:
 +            results["depth"] = depth
-+
++        
          if self.training:
 -            self.info["means2d"].retain_grad()
-+            if cfg_render_mode == "default":
++            if render_mode == "default":
 +                self.info["means2d"].retain_grad()
++            elif render_mode == "geer":
++                if self.info.get("geer_gradient") is None:
++                    raise RuntimeError(
++                        "GEER training requires gsplat with geer_gradient support"
++                    )
++                self.info["geer_gradient"].retain_grad()
 +            else:
 +                self.info["means3d"] = gs.means
 +                self.info["means3d"].retain_grad()
          
          return results, render_fn
  
-@@ -483,7 +516,7 @@ class BasicTrainer(nn.Module):
+@@ -483,7 +642,7 @@ class BasicTrainer(nn.Module):
              cam=processed_cam,
              near_plane=self.render_cfg.near_plane,
              far_plane=self.render_cfg.far_plane,
@@ -663,7 +3263,7 @@ index 2f959bf..93ebf0d 100644
              radius_clip=self.render_cfg.get('radius_clip', 0.)
          )
          
-@@ -550,7 +583,7 @@ class BasicTrainer(nn.Module):
+@@ -550,7 +709,7 @@ class BasicTrainer(nn.Module):
              loss_dict.update({"sky_loss_opacity": sky_loss_opacity})
          
          # depth loss
@@ -672,7 +3272,7 @@ index 2f959bf..93ebf0d 100644
              gt_depth = image_infos["lidar_depth_map"] 
              lidar_hit_mask = (gt_depth > 0).float() * valid_loss_mask
              pred_depth = outputs["depth"]
-@@ -574,7 +607,7 @@ class BasicTrainer(nn.Module):
+@@ -574,7 +733,7 @@ class BasicTrainer(nn.Module):
              
          # from pvg: https://github.com/fudan-zvg/PVG/blob/b4162a9135282e0f3c929054f16be1b3fbacd77a/train.py#L161
          inverse_depth_smoothness_reg = self.losses_dict.get("inverse_depth_smoothness", None)
@@ -681,7 +3281,7 @@ index 2f959bf..93ebf0d 100644
              inverse_depth = 1 / (outputs["depth"] + 1e-5)
              loss_inv_depth = kornia.losses.inverse_depth_smoothness_loss(
                  inverse_depth[None].repeat(1, 1, 1, 3).permute(0, 3, 1, 2),
-@@ -714,13 +747,13 @@ class BasicTrainer(nn.Module):
+@@ -714,13 +873,13 @@ class BasicTrainer(nn.Module):
          logger.info(f"Saved a checkpoint to {ckpt_path}")
          
      def init_viewer(self, port: int = 8080):
@@ -701,7 +3301,7 @@ index 2f959bf..93ebf0d 100644
      @torch.no_grad()
      def _viewer_render_fn(
 diff --git a/models/trainers/scene_graph.py b/models/trainers/scene_graph.py
-index 92a3bd5..0879745 100644
+index 92a3bd5cac97fbe9c5a534ec4b549795e0bfd19a..0879745339120e689296e17d4d52925373a02375 100644
 --- a/models/trainers/scene_graph.py
 +++ b/models/trainers/scene_graph.py
 @@ -243,7 +243,7 @@ class MultiTrainer(BasicTrainer):
@@ -734,7 +3334,7 @@ index 92a3bd5..0879745 100644
          return outputs
  
 diff --git a/models/trainers/single.py b/models/trainers/single.py
-index 3e07274..e24b938 100644
+index 3e07274cd4cb9c844b3890d31e95c38f8b67614c..e24b9383e16949007b421d41a041ee0c8d7b2457 100644
 --- a/models/trainers/single.py
 +++ b/models/trainers/single.py
 @@ -176,7 +176,7 @@ class SingleTrainer(BasicTrainer):
@@ -747,7 +3347,7 @@ index 3e07274..e24b938 100644
          )
          
 diff --git a/models/video_utils.py b/models/video_utils.py
-index b3eae4b..a3546f3 100644
+index b3eae4bcb8ce6a94510fde23a5fa8c7a898a9b7b..82e290e66e00f4e3b662684e6e31bde07ef7b513 100644
 --- a/models/video_utils.py
 +++ b/models/video_utils.py
 @@ -48,7 +48,8 @@ def render_images(
@@ -812,7 +3412,19 @@ index b3eae4b..a3546f3 100644
              # get image and camera infos
              image_infos, cam_infos = dataset.get_image(i, camera_downscale)
              for k, v in image_infos.items():
-@@ -196,8 +210,9 @@ def render(
+@@ -152,6 +166,11 @@ def render(
+ 
+             # ------------- rgb ------------- #
+             rgb = results["rgb"]
++            if "valid_masks" in image_infos:
++                valid = image_infos["valid_masks"].bool()
++                rgb = rgb * valid[..., None]
++                if "pixels" in image_infos:
++                    image_infos["pixels"] = image_infos["pixels"] * valid[..., None]
+             rgbs.append(get_numpy(rgb))
+             if "pixels" in image_infos:
+                 gt_rgbs.append(get_numpy(image_infos["pixels"]))
+@@ -196,24 +215,25 @@ def render(
              if "rgb_sky" in results:
                  rgb_sky.append(get_numpy(results["rgb_sky"]))
              # ------------- depth ------------- #
@@ -824,7 +3436,81 @@ index b3eae4b..a3546f3 100644
              # ------------- mask ------------- #
              if "opacity" in results:
                  opacities.append(get_numpy(results["opacity"]))
-@@ -317,6 +332,52 @@ def render(
+-            if "Background_depth" in results:
++            if results.get("Background_depth") is not None:
+                 Background_depths.append(get_numpy(results["Background_depth"]))
+                 Background_opacities.append(get_numpy(results["Background_opacity"]))
+-            if "RigidNodes_depth" in results:
++            if results.get("RigidNodes_depth") is not None:
+                 RigidNodes_depths.append(get_numpy(results["RigidNodes_depth"]))
+                 RigidNodes_opacities.append(get_numpy(results["RigidNodes_opacity"]))
+-            if "DeformableNodes_depth" in results:
++            if results.get("DeformableNodes_depth") is not None:
+                 DeformableNodes_depths.append(get_numpy(results["DeformableNodes_depth"]))
+                 DeformableNodes_opacities.append(get_numpy(results["DeformableNodes_opacity"]))
+-            if "SMPLNodes_depth" in results:
++            if results.get("SMPLNodes_depth") is not None:
+                 SMPLNodes_depths.append(get_numpy(results["SMPLNodes_depth"]))
+                 SMPLNodes_opacities.append(get_numpy(results["SMPLNodes_opacity"]))
+-            if "Dynamic_depth" in results:
++            if results.get("Dynamic_depth") is not None:
+                 Dynamic_depths.append(get_numpy(results["Dynamic_depth"]))
+                 Dynamic_opacities.append(get_numpy(results["Dynamic_opacity"]))
+             if "sky_masks" in image_infos:
+@@ -229,7 +249,15 @@ def render(
+                 lidar_on_images.append(lidar_on_image)
+ 
+             if compute_metrics:
+-                psnr = compute_psnr(rgb, image_infos["pixels"])
++                if "valid_masks" in image_infos:
++                    valid = image_infos["valid_masks"].bool()
++                    psnr = (
++                        compute_psnr(rgb[valid], image_infos["pixels"][valid])
++                        if valid.any()
++                        else float("nan")
++                    )
++                else:
++                    psnr = compute_psnr(rgb, image_infos["pixels"])
+                 ssim_score = ssim(
+                     get_numpy(rgb),
+                     get_numpy(image_infos["pixels"]),
+@@ -247,6 +275,8 @@ def render(
+                 
+                 if "sky_masks" in image_infos:
+                     occupied_mask = ~get_numpy(image_infos["sky_masks"]).astype(bool)
++                    if "valid_masks" in image_infos:
++                        occupied_mask &= get_numpy(image_infos["valid_masks"]).astype(bool)
+                     if occupied_mask.sum() > 0:
+                         occupied_psnrs.append(
+                             compute_psnr(
+@@ -265,6 +295,8 @@ def render(
+ 
+                 if "dynamic_masks" in image_infos:
+                     dynamic_mask = get_numpy(image_infos["dynamic_masks"]).astype(bool)
++                    if "valid_masks" in image_infos:
++                        dynamic_mask &= get_numpy(image_infos["valid_masks"]).astype(bool)
+                     if dynamic_mask.sum() > 0:
+                         masked_psnrs.append(
+                             compute_psnr(
+@@ -283,6 +315,8 @@ def render(
+                 
+                 if "human_masks" in image_infos:
+                     human_mask = get_numpy(image_infos["human_masks"]).astype(bool)
++                    if "valid_masks" in image_infos:
++                        human_mask &= get_numpy(image_infos["valid_masks"]).astype(bool)
+                     if human_mask.sum() > 0:
+                         human_psnrs.append(
+                             compute_psnr(
+@@ -301,6 +335,8 @@ def render(
+                 
+                 if "vehicle_masks" in image_infos:
+                     vehicle_mask = get_numpy(image_infos["vehicle_masks"]).astype(bool)
++                    if "valid_masks" in image_infos:
++                        vehicle_mask &= get_numpy(image_infos["valid_masks"]).astype(bool)
+                     if vehicle_mask.sum() > 0:
+                         vehicle_psnrs.append(
+                             compute_psnr(
+@@ -317,6 +353,52 @@ def render(
                              )[1][vehicle_mask].mean()
                          )
  
@@ -877,7 +3563,7 @@ index b3eae4b..a3546f3 100644
      # messy aggregation...
      results_dict = {}
      results_dict["psnr"] = non_zero_mean(psnrs) if compute_metrics else -1
-@@ -331,7 +392,8 @@ def render(
+@@ -331,7 +413,8 @@ def render(
      results_dict["vehicle_psnr"] = non_zero_mean(vehicle_psnrs) if compute_metrics else -1
      results_dict["vehicle_ssim"] = non_zero_mean(vehicle_ssims) if compute_metrics else -1
      results_dict["rgbs"] = rgbs
@@ -887,7 +3573,7 @@ index b3eae4b..a3546f3 100644
      results_dict["cam_names"] = cam_names
      results_dict["cam_ids"] = cam_ids
      if len(opacities) > 0:
-@@ -378,6 +440,8 @@ def render(
+@@ -378,6 +461,8 @@ def render(
          results_dict["SMPLNodes_opacities"] = SMPLNodes_opacities
      if len(Dynamic_opacities) > 0:
          results_dict["Dynamic_opacities"] = Dynamic_opacities
@@ -896,7 +3582,7 @@ index b3eae4b..a3546f3 100644
      return results_dict
  
  
-@@ -392,7 +456,55 @@ def save_videos(
+@@ -392,7 +477,55 @@ def save_videos(
      save_images: bool = False,
      fps: int = 10,
      verbose: bool = True,
@@ -952,8 +3638,31 @@ index b3eae4b..a3546f3 100644
      if save_seperate_video:
          return_frame = save_seperate_videos(
              render_results,
+@@ -438,9 +571,11 @@ def render_novel_views(trainer, render_data: list, save_path: str, fps: int = 30
+         for frame_data in render_data:
+             # Move data to GPU
+             for key, value in frame_data["cam_infos"].items():
+-                frame_data["cam_infos"][key] = value.cuda(non_blocking=True)
++                if isinstance(value, Tensor):
++                    frame_data["cam_infos"][key] = value.to(trainer.device, non_blocking=True)
+             for key, value in frame_data["image_infos"].items():
+-                frame_data["image_infos"][key] = value.cuda(non_blocking=True)
++                if isinstance(value, Tensor):
++                    frame_data["image_infos"][key] = value.to(trainer.device, non_blocking=True)
+             
+             # Perform rendering
+             outputs = trainer(
+@@ -455,6 +590,8 @@ def render_novel_views(trainer, render_data: list, save_path: str, fps: int = 30
+             )
+             
+             # Convert to uint8 and write to video
++            if "egocar_masks" in frame_data["image_infos"]:
++                rgb *= 1 - frame_data["image_infos"]["egocar_masks"].cpu().numpy()[..., None]
+             rgb_uint8 = (rgb * 255).astype(np.uint8)
+             writer.append_data(rgb_uint8)
+     
 diff --git a/requirements.txt b/requirements.txt
-index 77e9168..22567cc 100644
+index 77e916832313cb133cb1267800776bb9ef1badb5..22567cc695cfee6a33f13c5428a7000793abda59 100644
 --- a/requirements.txt
 +++ b/requirements.txt
 @@ -13,7 +13,7 @@ tensorboard==2.11.0
@@ -974,8 +3683,15 @@ index 77e9168..22567cc 100644
 +splines==0.3.3
  lpips==0.1.4
 \ No newline at end of file
+diff --git a/third_party/Humans4D b/third_party/Humans4D
+index 6ec79656a23c33237c724742ca2a0ec00b398b53..efe18deff163b29dff87ddbd575fa29b716a356c 160000
+--- a/third_party/Humans4D
++++ b/third_party/Humans4D
+@@ -1 +1 @@
+-Subproject commit 6ec79656a23c33237c724742ca2a0ec00b398b53
++Subproject commit efe18deff163b29dff87ddbd575fa29b716a356c
 diff --git a/tools/eval.py b/tools/eval.py
-index df1e9f1..9b4c954 100644
+index df1e9f14372a8e26d777030096567cf0bfcb3e88..7cb32e69544368015e356b9f1a5073dbe679279c 100644
 --- a/tools/eval.py
 +++ b/tools/eval.py
 @@ -13,7 +13,6 @@ from utils.misc import import_str
@@ -1103,12 +3819,91 @@ index df1e9f1..9b4c954 100644
          if args.enable_wandb:
              for k, v in vis_frame_dict.items():
                  wandb.log({"image_rendering/full/" + k: wandb.Image(v)})
+@@ -160,7 +162,21 @@ def do_evaluation(
+         
+         for traj_type, traj in render_traj.items():
+             # Prepare rendering data
+-            render_data = dataset.prepare_novel_view_render_data(traj)
++            camera_options = {
++                key: render_novel_cfg[key]
++                for key in (
++                    "camera_model",
++                    "camera_id",
++                    "height",
++                    "width",
++                    "fov",
++                    "radial_coeffs",
++                    "ftheta_parameters",
++                    "render_mode",
++                )
++                if key in render_novel_cfg
++            }
++            render_data = dataset.prepare_novel_view_render_data(traj, **camera_options)
+             
+             # Render and save video
+             save_path = os.path.join(video_output_dir, f"{traj_type}.mp4")
+@@ -169,6 +185,46 @@ def do_evaluation(
+                 fps=render_novel_cfg.get("fps", cfg.render.fps)
+             )
+             logger.info(f"Saved novel view video for trajectory type: {traj_type} to {save_path}")
++
++    render_ftheta_cfg = cfg.render.get("render_ftheta", None)
++    if render_ftheta_cfg is not None and render_ftheta_cfg is not False:
++        ftheta_render_mode = render_ftheta_cfg.get(
++            "render_mode", trainer.render_cfg.get("render_mode", "default")
++        )
++        if ftheta_render_mode not in ("ut", "geer"):
++            raise ValueError("FTheta rendering requires render_mode 'ut' or 'geer'")
++        if any(render_ftheta_cfg.get(key) is not None for key in ("fov", "radial_coeffs")):
++            raise ValueError("FTheta rendering uses ftheta_parameters, not fov or radial_coeffs")
++        logger.info("Rendering FTheta views with %s...", ftheta_render_mode)
++        base_traj_cfg = render_novel_cfg if render_novel_cfg is not None else {}
++        render_traj = dataset.get_novel_render_traj(
++            traj_types=render_ftheta_cfg.get(
++                "traj_types", base_traj_cfg.get("traj_types", ["front_center_interp"])
++            ),
++            target_frames=render_ftheta_cfg.get(
++                "frames", base_traj_cfg.get("frames", dataset.frame_num)
++            ),
++        )
++        video_output_dir = f"{cfg.log_dir}/videos{post_fix}/novel_ftheta_{step}"
++        os.makedirs(video_output_dir, exist_ok=True)
++        for traj_type, traj in render_traj.items():
++            render_data = dataset.prepare_novel_view_render_data(
++                traj,
++                camera_model="ftheta",
++                camera_id=render_ftheta_cfg.get("camera_id", None),
++                height=render_ftheta_cfg.get("height", None),
++                width=render_ftheta_cfg.get("width", None),
++                ftheta_parameters=render_ftheta_cfg.get("ftheta_parameters", None),
++                render_mode=ftheta_render_mode,
++            )
++            save_path = os.path.join(video_output_dir, f"{traj_type}.mp4")
++            render_novel_views(
++                trainer, render_data, save_path,
++                fps=render_ftheta_cfg.get("fps", base_traj_cfg.get("fps", cfg.render.fps)),
++            )
++            del render_data
++            torch.cuda.empty_cache()
++            logger.info(f"Saved FTheta view video for trajectory type: {traj_type} to {save_path}")
+             
+ def main(args):
+     log_dir = os.path.dirname(args.resume_from)
+@@ -229,6 +285,8 @@ def main(args):
+     if cfg.render.vis_error:
+         render_keys.insert(render_keys.index("rgbs") + 1, "rgb_error_maps")
+     
++    render_keys = cfg.render.get("keys", render_keys)
++
+     if args.save_catted_videos:
+         cfg.logging.save_seperate_video = False
+     
 diff --git a/tools/viewer.py b/tools/viewer.py
 new file mode 100644
-index 0000000..37572b6
+index 0000000000000000000000000000000000000000..ac42f7db0c90767dc3457c44873ab8d444d6f860
 --- /dev/null
 +++ b/tools/viewer.py
-@@ -0,0 +1,2448 @@
+@@ -0,0 +1,2523 @@
 +import argparse
 +import json
 +import os
@@ -1166,7 +3961,8 @@ index 0000000..37572b6
 +        "turbo", "viridis", "magma", "inferno", "cividis", "gray"
 +    ] = "turbo"
 +    rasterize_mode: Literal["classic", "antialiased"] = "classic"
-+    camera_model: Literal["pinhole", "ortho", "fisheye"] = "pinhole"
++    camera_model: Literal["pinhole", "ortho", "fisheye", "ftheta"] = "pinhole"
++    ftheta_calibration: str = ""
 +    rendering_mode: Literal["standard", "gut + eval3d", "geer + eval3d"] = "standard"
 +    radial_k1: float = 0.0
 +    radial_k2: float = 0.0
@@ -1496,7 +4292,7 @@ index 0000000..37572b6
 +        with self._camera_intrinsics_folder:
 +            camera_model_dropdown = server.gui.add_dropdown(
 +                "Camera Model",
-+                ("pinhole", "ortho", "fisheye"),
++                ("pinhole", "ortho", "fisheye", "ftheta"),
 +                initial_value=self.render_tab_state.camera_model,
 +                hint="Camera model used for rendering.",
 +                order=0.0,
@@ -1574,6 +4370,17 @@ index 0000000..37572b6
 +                    setattr(self.render_tab_state, attr, float(slider.value))
 +                    self.rerender(_)
 +
++            ftheta_path = server.gui.add_text(
++                "FTheta calibration JSON",
++                initial_value=self.render_tab_state.ftheta_calibration,
++                hint="Leave empty to use the selected dataset camera calibration.",
++            )
++
++            @ftheta_path.on_update
++            def _(_):
++                self.render_tab_state.ftheta_calibration = ftheta_path.value
++                self.rerender(_)
++
 +            def _sync_distortion_ui_enabled() -> None:
 +                sliders = (
 +                    radial_k1_slider,
@@ -1587,9 +4394,10 @@ index 0000000..37572b6
 +                    thin_prism_s1_slider,
 +                    thin_prism_s2_slider,
 +                )
-+                fisheye = camera_model_dropdown.value == "fisheye"
++                fisheye = camera_model_dropdown.value in ("fisheye", "ftheta")
++                ftheta_path.disabled = camera_model_dropdown.value != "ftheta"
 +                for slider in sliders[:4]:
-+                    slider.disabled = False
++                    slider.disabled = camera_model_dropdown.value == "ftheta"
 +                for slider in sliders[4:]:
 +                    slider.disabled = fisheye
 +
@@ -2134,6 +4942,7 @@ index 0000000..37572b6
 +    radial_coeffs: Optional[torch.Tensor] = None,
 +    tangential_coeffs: Optional[torch.Tensor] = None,
 +    thin_prism_coeffs: Optional[torch.Tensor] = None,
++    ftheta_coeffs=None,
 +) -> torch.Tensor:
 +    if K.is_cuda:
 +        raymap = compute_raymap(
@@ -2141,6 +4950,7 @@ index 0000000..37572b6
 +            width,
 +            height,
 +            camera_model=camera_model,
++            ftheta_coeffs=ftheta_coeffs,
 +            radial_coeffs=radial_coeffs[None] if radial_coeffs is not None else None,
 +            tangential_coeffs=(
 +                tangential_coeffs[None] if tangential_coeffs is not None else None
@@ -2172,6 +4982,7 @@ index 0000000..37572b6
 +    tangential_coeffs: Optional[torch.Tensor] = None,
 +    thin_prism_coeffs: Optional[torch.Tensor] = None,
 +    extra_infos: Optional[dict] = None,
++    ftheta_coeffs=None,
 +) -> dict:
 +    viewdirs = _get_viewdirs(
 +        width,
@@ -2179,6 +4990,7 @@ index 0000000..37572b6
 +        c2w,
 +        K,
 +        camera_model=camera_model,
++        ftheta_coeffs=ftheta_coeffs,
 +        radial_coeffs=radial_coeffs,
 +        tangential_coeffs=tangential_coeffs,
 +        thin_prism_coeffs=thin_prism_coeffs,
@@ -2349,13 +5161,53 @@ index 0000000..37572b6
 +            tangential_coeffs = None
 +            thin_prism_coeffs = None
 +
++        ftheta_parameters = None
++        ftheta_coeffs = None
++        if camera_model == "ftheta":
++            from utils.geometry import scale_ftheta_calibration
++            from gsplat.cuda._wrapper import FThetaCameraDistortionParameters, FThetaPolynomialType
++
++            if not with_eval3d:
++                raise ValueError("FTheta viewing requires UT or GEER")
++            if with_geer and not trainer._geer_supports_ftheta:
++                raise RuntimeError(
++                    "Install GEER with native FTheta bounds support; see docs/PhysicalAI.md"
++                )
++            context = (
++                image_context_getter(frame_idx, int(height), int(width), device)
++                if image_context_getter
++                else {}
++            )
++            path = render_tab_state.ftheta_calibration.strip()
++            if path:
++                with open(path) as stream:
++                    calibration = json.load(stream)
++            else:
++                calibration = context.get("_ftheta_parameters")
++            if calibration is None:
++                raise ValueError("Select a PhysicalAI camera or provide an FTheta calibration JSON")
++            ftheta_parameters = scale_ftheta_calibration(
++                calibration, int(width), int(height), fit=True
++            )
++            K = torch.eye(3, device=device)
++            K[:2, 2] = K.new_tensor(ftheta_parameters["principal_point"]) + 0.5
++            p = ftheta_parameters
++            ftheta_coeffs = FThetaCameraDistortionParameters(
++                reference_poly=FThetaPolynomialType[p["reference_poly"]],
++                pixeldist_to_angle_poly=tuple(p["pixeldist_to_angle_poly"]),
++                angle_to_pixeldist_poly=tuple(p["angle_to_pixeldist_poly"]),
++                max_angle=float(p["max_angle"]),
++                linear_cde=tuple(p["linear_cde"]),
++            )
++            radial_coeffs = tangential_coeffs = thin_prism_coeffs = None
++
 +        def get_image_infos() -> dict:
 +            extra_infos = (
 +                image_context_getter(frame_idx, int(height), int(width), device)
 +                if image_context_getter is not None
 +                else None
 +            )
-+            return _get_image_infos(
++            infos = _get_image_infos(
 +                width,
 +                height,
 +                c2w,
@@ -2365,7 +5217,17 @@ index 0000000..37572b6
 +                tangential_coeffs=tangential_coeffs,
 +                thin_prism_coeffs=thin_prism_coeffs,
 +                extra_infos=extra_infos,
++                ftheta_coeffs=ftheta_coeffs,
 +            )
++            if ftheta_parameters is not None:
++                from utils.geometry import camera_model_rays
++
++                rays, valid = camera_model_rays(
++                    int(height), int(width), K, "ftheta", ftheta_parameters=ftheta_parameters
++                )
++                infos["viewdirs"] = rays @ c2w[:3, :3].T
++                infos["egocar_masks"] = (~valid).float()
++            return infos
 +
 +        cam = dataclass_camera(
 +            camtoworlds=c2w,
@@ -2414,6 +5276,7 @@ index 0000000..37572b6
 +                render_mode=render_mode_arg,
 +                rasterize_mode=rasterize_mode,
 +                camera_model=camera_model,
++                ftheta_coeffs=ftheta_coeffs,
 +                packed=False,
 +                with_ut=with_ut,
 +                with_geer=with_geer,
@@ -2535,6 +5398,9 @@ index 0000000..37572b6
 +            renders = (
 +                apply_float_colormap(alpha, colormap).cpu().numpy()
 +            )
++        if ftheta_parameters is not None:
++            valid = 1.0 - get_image_infos()["egocar_masks"]
++            renders = renders * valid.cpu().numpy()[..., None]
 +        return renders
 +
 +    return viewer_render_fn
@@ -3405,6 +6271,8 @@ index 0000000..37572b6
 +
 +    height = float(getattr(camera, "HEIGHT"))
 +    fy = float(K[1, 1])
++    if getattr(camera, "camera_model", "pinhole") == "ftheta":
++        fy = height / (2 * np.tan(np.radians(60) / 2))
 +    position = c2w[:3, 3].astype(np.float64)
 +    look_at = (position + c2w[:3, 2]).astype(np.float64)
 +    up_direction = (-c2w[:3, 1]).astype(np.float64)
@@ -3464,6 +6332,8 @@ index 0000000..37572b6
 +            context["normed_time"] = torch.ones(
 +                (height, width), dtype=torch.float32, device=device
 +            ) * normed_time
++        if hasattr(camera, "ftheta_parameters"):
++            context["_ftheta_parameters"] = camera.ftheta_parameters
 +        return context
 +
 +    return {
@@ -3554,9 +6424,362 @@ index 0000000..37572b6
 +    parser.add_argument(
 +        "--port", type=int, default=8080, help="port for the viewer server"
 +    )
-+
++    
 +    args = parser.parse_args()
 +    cli(main, args, verbose=True)
+diff --git a/utils/geometry.py b/utils/geometry.py
+index c1951f4f089f2c6e1098e918912cee4b8f49f625..ea51555974ba320d72a0826aa4ccf9d9419bfce0 100644
+--- a/utils/geometry.py
++++ b/utils/geometry.py
+@@ -101,4 +101,263 @@ def rotation_6d_to_matrix(d6: Tensor) -> Tensor:
+     b2 = a2 - (b1 * a2).sum(-1, keepdim=True) * b1
+     b2 = F.normalize(b2, dim=-1)
+     b3 = torch.cross(b1, b2, dim=-1)
+-    return torch.stack((b1, b2, b3), dim=-2)
+\ No newline at end of file
++    return torch.stack((b1, b2, b3), dim=-2)
++
++
++def scale_ftheta_calibration(parameters, width, height, fit=False, scale=None):
++    """Resize NCore calibration; stored principal points use integer pixel centers."""
++    if parameters['reference_poly'] not in ('PIXELDIST_TO_ANGLE', 'ANGLE_TO_PIXELDIST'):
++        raise ValueError('Unknown FTheta reference polynomial')
++    for key, count in (
++        ('resolution', 2),
++        ('principal_point', 2),
++        ('linear_cde', 3),
++        ('pixeldist_to_angle_poly', 6),
++        ('angle_to_pixeldist_poly', 6),
++    ):
++        values = np.asarray(parameters[key], dtype=np.float64)
++        if values.shape != (count,) or not np.isfinite(values).all():
++            raise ValueError('Invalid FTheta calibration: ' + key)
++    if min(parameters['resolution']) <= 0 or not 0 < float(parameters['max_angle']) < np.pi:
++        raise ValueError('Invalid FTheta resolution or max_angle')
++    sx, sy = width / parameters['resolution'][0], height / parameters['resolution'][1]
++    # interpolate(scale_factor=...) rounds output sizes without changing the pixel scale.
++    if scale is not None:
++        sx = sy = float(scale)
++    offset = [0.0, 0.0]
++    if fit:
++        sx = sy = min(sx, sy)
++        offset = [
++            (width - parameters["resolution"][0] * sx) / 2,
++            (height - parameters["resolution"][1] * sx) / 2,
++        ]
++    if sx <= 0 or not np.isclose(sx, sy, rtol=1e-5):
++        raise ValueError('FTheta requires positive, isotropic image scaling')
++    p = dict(parameters)
++    p['resolution'] = [int(width), int(height)]
++    p['principal_point'] = [
++        (float(v) + 0.5) * sx - 0.5 + offset[i] for i, v in enumerate(p['principal_point'])
++    ]
++    p['pixeldist_to_angle_poly'] = [
++        float(v) / sx**i for i, v in enumerate(p['pixeldist_to_angle_poly'])
++    ]
++    p['angle_to_pixeldist_poly'] = [float(v) * sx for v in p['angle_to_pixeldist_poly']]
++    return p
++
++
++def _camera_polynomial(coefficients, x):
++    y = torch.zeros_like(x)
++    for c in reversed(coefficients):
++        y = y * x + float(c)
++    return y
++
++
++def _invert_camera_polynomial(coefficients, target, initial):
++    derivative = [i * float(c) for i, c in enumerate(coefficients)][1:]
++    value = initial.clone()
++    for _ in range(12):
++        slope = _camera_polynomial(derivative, value)
++        safe = torch.where(slope.abs() > 1e-10, slope, torch.ones_like(slope))
++        value = value - (_camera_polynomial(coefficients, value) - target) / safe
++    valid = torch.isfinite(value) & (
++        (_camera_polynomial(coefficients, value) - target).abs() < 1e-4 * (1 + target.abs())
++    )
++    return value, valid
++
++
++def _distort_pinhole(xy, radial_coeffs=None, tangential_coeffs=None):
++    """OpenCV rational radial model plus tangential distortion (normalized plane)."""
++    k = (
++        xy.new_zeros(6)
++        if radial_coeffs is None
++        else torch.as_tensor(radial_coeffs, device=xy.device, dtype=xy.dtype)
++    )
++    p = (
++        xy.new_zeros(2)
++        if tangential_coeffs is None
++        else torch.as_tensor(tangential_coeffs, device=xy.device, dtype=xy.dtype)
++    )
++    if k.shape != (6,) or p.shape != (2,):
++        raise ValueError('Pinhole distortion requires six radial and two tangential coefficients')
++    x, y = xy.unbind(-1)
++    r2 = x * x + y * y
++    numerator = 1 + r2 * (k[0] + r2 * (k[1] + r2 * k[2]))
++    denominator = 1 + r2 * (k[3] + r2 * (k[4] + r2 * k[5]))
++    radial = numerator / denominator
++    delta = torch.stack(
++        (2 * p[0] * x * y + p[1] * (r2 + 2 * x * x), p[0] * (r2 + 2 * y * y) + 2 * p[1] * x * y), -1
++    )
++    return xy * radial[..., None] + delta, radial, delta
++
++
++def project_camera_model(
++    points,
++    intrinsics,
++    camera_model='pinhole',
++    radial_coeffs=None,
++    ftheta_parameters=None,
++    tangential_coeffs=None,
++):
++    """Project camera-space points to pixel-center coordinates, with validity."""
++    r = torch.linalg.vector_norm(points[..., :2], dim=-1)
++    theta = torch.atan2(r, points[..., 2])
++    valid = torch.isfinite(points).all(-1) & (points.norm(dim=-1) > 1e-8)
++    if camera_model == 'pinhole':
++        xy = points[..., :2] / points[..., 2:].clamp_min(1e-8)
++        if radial_coeffs is not None or tangential_coeffs is not None:
++            xy, _, _ = _distort_pinhole(xy, radial_coeffs, tangential_coeffs)
++        pixels = xy * intrinsics.diagonal()[:2] + intrinsics[:2, 2]
++        return pixels, valid & (points[..., 2] > 0) & torch.isfinite(pixels).all(-1)
++    if camera_model == 'fisheye':
++        coefficients = [0.0, 1.0]
++        for k in (radial_coeffs if radial_coeffs is not None else [0.0] * 4):
++            coefficients.extend([0.0, float(k)])
++        radius = _camera_polynomial(coefficients, theta)
++        xy = points[..., :2] * (radius / r.clamp_min(1e-8))[..., None]
++        pixels = xy * intrinsics.diagonal()[:2] + intrinsics[:2, 2]
++        return pixels, valid & (theta < np.pi / 2)
++    if camera_model != 'ftheta' or ftheta_parameters is None:
++        raise ValueError('Expected pinhole, fisheye, or ftheta with calibration')
++    p = ftheta_parameters
++    radius = _camera_polynomial(p['angle_to_pixeldist_poly'], theta)
++    if p['reference_poly'] == 'PIXELDIST_TO_ANGLE':
++        radius, converged = _invert_camera_polynomial(p['pixeldist_to_angle_poly'], theta, radius)
++        valid &= converged
++    elif p['reference_poly'] != 'ANGLE_TO_PIXELDIST':
++        raise ValueError('Unknown FTheta reference polynomial')
++    xy = points[..., :2] * (radius / r.clamp_min(1e-8))[..., None]
++    c, d, e = [float(v) for v in p['linear_cde']]
++    pixels = torch.stack((c * xy[..., 0] + d * xy[..., 1], e * xy[..., 0] + xy[..., 1]), -1)
++    pixels += points.new_tensor(p['principal_point']) + 0.5
++    valid &= (theta <= float(p['max_angle'])) & (radius >= 0) & torch.isfinite(pixels).all(-1)
++    return pixels, valid
++
++
++def camera_model_rays(
++    height,
++    width,
++    intrinsics,
++    camera_model='pinhole',
++    radial_coeffs=None,
++    ftheta_parameters=None,
++    tangential_coeffs=None,
++):
++    """Unit camera rays and valid pixels. Pixel centers are (x + .5, y + .5)."""
++    y, x = torch.meshgrid(
++        torch.arange(height, device=intrinsics.device, dtype=intrinsics.dtype) + 0.5,
++        torch.arange(width, device=intrinsics.device, dtype=intrinsics.dtype) + 0.5,
++        indexing='ij',
++    )
++    pixels = torch.stack((x, y), -1)
++    valid = torch.ones((height, width), dtype=torch.bool, device=intrinsics.device)
++    if camera_model == 'pinhole':
++        distorted = (pixels - intrinsics[:2, 2]) / intrinsics.diagonal()[:2]
++        xy = distorted.clone()
++        if radial_coeffs is not None or tangential_coeffs is not None:
++            for _ in range(20):
++                _, radial, delta = _distort_pinhole(xy, radial_coeffs, tangential_coeffs)
++                xy = (distorted - delta) / radial[..., None]
++            projected, _, _ = _distort_pinhole(xy, radial_coeffs, tangential_coeffs)
++            valid &= (projected - distorted).abs().amax(-1) < 1e-5
++        rays = F.normalize(torch.cat((xy, torch.ones_like(x[..., None])), -1), dim=-1)
++        valid &= torch.isfinite(rays).all(-1)
++        return torch.nan_to_num(rays), valid
++    if camera_model == 'fisheye':
++        xy = (pixels - intrinsics[:2, 2]) / intrinsics.diagonal()[:2]
++        radius = xy.norm(dim=-1)
++        coefficients = [0.0, 1.0]
++        for k in (radial_coeffs if radial_coeffs is not None else [0.0] * 4):
++            coefficients.extend([0.0, float(k)])
++        theta, valid = _invert_camera_polynomial(coefficients, radius, radius)
++        valid &= (theta >= 0) & (theta < np.pi / 2)
++    elif camera_model == 'ftheta' and ftheta_parameters is not None:
++        p = ftheta_parameters
++        c, d, e = [float(v) for v in p['linear_cde']]
++        if abs(c - d * e) < 1e-10:
++            raise ValueError('Singular FTheta affine calibration')
++        offset = pixels - (intrinsics.new_tensor(p['principal_point']) + 0.5)
++        xy = torch.stack(
++            (offset[..., 0] - d * offset[..., 1], c * offset[..., 1] - e * offset[..., 0]), -1
++        ) / (c - d * e)
++        radius = xy.norm(dim=-1)
++        theta = _camera_polynomial(p['pixeldist_to_angle_poly'], radius)
++        if p['reference_poly'] == 'ANGLE_TO_PIXELDIST':
++            theta, valid = _invert_camera_polynomial(p['angle_to_pixeldist_poly'], radius, theta)
++        elif p['reference_poly'] != 'PIXELDIST_TO_ANGLE':
++            raise ValueError('Unknown FTheta reference polynomial')
++        valid &= (theta >= 0) & (theta <= float(p['max_angle']))
++    else:
++        raise ValueError('Expected pinhole, fisheye, or calibrated ftheta camera')
++    rays = torch.cat(
++        (xy * (torch.sin(theta) / radius.clamp_min(1e-8))[..., None], torch.cos(theta)[..., None]),
++        -1,
++    )
++    rays = torch.where((radius < 1e-8)[..., None], rays.new_tensor([0.0, 0.0, 1.0]), rays)
++    valid &= torch.isfinite(rays).all(-1)
++    return torch.nan_to_num(rays), valid
++
++
++def interpolate_camera_poses(start, end, fraction):
++    """Interpolate world-to-camera transforms as gsplat does, then return camera poses."""
++    from pytorch3d.transforms import matrix_to_quaternion, quaternion_to_matrix
++
++    start, end = torch.linalg.inv(start), torch.linalg.inv(end)
++    a, b = matrix_to_quaternion(start[:3, :3]), matrix_to_quaternion(end[:3, :3])
++    dot = (a * b).sum()
++    b = torch.where(dot < 0, -b, b)
++    dot = dot.abs().clamp(max=1.0)
++    t = torch.as_tensor(fraction, device=start.device, dtype=start.dtype)[..., None]
++    angle = torch.acos(dot.clamp(max=1 - 1e-7))
++    spherical = (torch.sin((1 - t) * angle) * a + torch.sin(t * angle) * b) / torch.sin(angle)
++    q = F.normalize(torch.where(dot > 0.9995, (1 - t) * a + t * b, spherical), dim=-1)
++    rotation = quaternion_to_matrix(q).transpose(-1, -2)
++    translation = (1 - t) * start[:3, 3] + t * end[:3, 3]
++    return rotation, -torch.einsum("...ij,...j->...i", rotation, translation)
++
++
++def camera_shutter_fraction(pixels, width, height, shutter_type):
++    if shutter_type == 'GLOBAL':
++        return torch.zeros_like(pixels[..., 0])
++    axis = 1 if shutter_type in ('ROLLING_TOP_TO_BOTTOM', 'ROLLING_BOTTOM_TO_TOP') else 0
++    if shutter_type not in (
++        'ROLLING_TOP_TO_BOTTOM',
++        'ROLLING_BOTTOM_TO_TOP',
++        'ROLLING_LEFT_TO_RIGHT',
++        'ROLLING_RIGHT_TO_LEFT',
++    ):
++        raise ValueError('Unsupported shutter type: ' + shutter_type)
++    size = (width, height)[axis]
++    if shutter_type in ('ROLLING_BOTTOM_TO_TOP', 'ROLLING_RIGHT_TO_LEFT'):
++        return (size - pixels[..., axis].ceil()) / max(size - 1, 1)
++    return pixels[..., axis].floor() / max(size - 1, 1)
++
++
++def project_world_camera(
++    points,
++    start,
++    end,
++    intrinsics,
++    width,
++    height,
++    camera_model='pinhole',
++    radial_coeffs=None,
++    ftheta_parameters=None,
++    shutter_type='GLOBAL',
++    tangential_coeffs=None,
++):
++    """Project using the same interpolated camera pose as native ray generation."""
++    fraction = points.new_full(points.shape[:-1], 0.5 if shutter_type != 'GLOBAL' else 0.0)
++    for _ in range(10 if shutter_type != 'GLOBAL' else 1):
++        rotation, origin = interpolate_camera_poses(start, end, fraction)
++        local = torch.einsum('...ji,...j->...i', rotation, points - origin)
++        pixels, valid = project_camera_model(
++            local, intrinsics, camera_model, radial_coeffs, ftheta_parameters, tangential_coeffs
++        )
++        fraction = camera_shutter_fraction(pixels, width, height, shutter_type)
++    valid &= (
++        (pixels[..., 0] >= 0)
++        & (pixels[..., 0] < width)
++        & (pixels[..., 1] >= 0)
++        & (pixels[..., 1] < height)
++    )
++    return pixels, local[..., 2], valid
+diff --git a/utils/visualization.py b/utils/visualization.py
+index d0780b8f2304f35e7ceb4bc4dea07c4804f87339..7cf643bd67fc902e2908b4cd857b4fb9c16a20c9 100644
+--- a/utils/visualization.py
++++ b/utils/visualization.py
+@@ -34,6 +34,8 @@ def get_layout(dataset_type: str):
+         layout = layout_kitti
+     elif dataset_type == "nuplan":
+         layout = layout_nuplan
++    elif dataset_type == "physicalai":
++        layout = layout_physicalai
+     else:
+         raise ValueError(f"dataset_type {dataset_type} not supported")
+     return layout
+@@ -340,6 +342,69 @@ def layout_argoverse(
+     tiled_img = tiled_img[min_y:max_y, min_x:max_x]
+     return tiled_img
+ 
++def layout_physicalai(
++    imgs: List[np.array], cam_names: List[str]
++) -> np.array:
++    """Combine cameras into a tiled image.
++    Layout:
++
++        ##############################################
++        #######   front_wide  #  front_tele    #######
++        ##############################################
++        #  cross_left  #              #  cross_right #
++        ##############################################
++        #  rear_left   #  rear_tele   #  rear_right  #
++        ##############################################
++
++    Images are resized to a common width while preserving their aspect ratios.
++    Unselected camera slots are left blank, then empty outer borders are cropped.
++    """
++    camera_positions = {
++        "front_wide": (0, 0.5),
++        "front_tele": (0, 1.5),
++        "cross_left": (1, 0),
++        "cross_right": (1, 2),
++        "rear_left": (2, 0),
++        "rear_tele": (2, 1),
++        "rear_right": (2, 2),
++    }
++    selected_imgs = [
++        imgs[idx] for idx, cam_name in enumerate(cam_names)
++        if cam_name in camera_positions
++    ]
++    if not selected_imgs:
++        raise ValueError("No PhysicalAI cameras found in cam_names")
++
++    channel = selected_imgs[0].shape[-1]
++    tile_width = max(img.shape[1] for img in selected_imgs)
++    tile_height = max(
++        round(img.shape[0] * tile_width / img.shape[1]) for img in selected_imgs
++    )
++    height = 3 * tile_height
++    width = 3 * tile_width
++    tiled_img = np.zeros((height, width, channel), dtype=np.float32)
++    filled_mask = np.zeros((height, width), dtype=np.uint8)
++
++    for idx, cam_name in enumerate(cam_names):
++        if cam_name not in camera_positions:
++            continue
++        img = imgs[idx]
++        img_height = round(img.shape[0] * tile_width / img.shape[1])
++        img = cv2.resize(img, (tile_width, img_height))
++        row, col = camera_positions[cam_name]
++        row_start = row * tile_height + (tile_height - img_height) // 2
++        col_start = int(col * tile_width)
++        row_end = row_start + img_height
++        col_end = col_start + tile_width
++        tiled_img[row_start:row_end, col_start:col_end] = img
++        filled_mask[row_start:row_end, col_start:col_end] = 1
++
++    # crop the image according to the largest filled area
++    filled_y, filled_x = np.where(filled_mask)
++    min_y, max_y = filled_y.min(), filled_y.max() + 1
++    min_x, max_x = filled_x.min(), filled_x.max() + 1
++    return tiled_img[min_y:max_y, min_x:max_x]
++
+ def dump_3d_bbox_on_image(
+     coords, img,
+     color: Optional[Tuple[int, int, int]] = None,
 -- 
 2.34.1
 

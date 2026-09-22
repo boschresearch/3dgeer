@@ -10,13 +10,11 @@ from typing_extensions import Literal
 from .cuda._wrapper import (
     RollingShutterType,
     FThetaCameraDistortionParameters,
-    FThetaPolynomialType,
     fully_fused_projection,
     fully_fused_projection_2dgs,
     fully_fused_projection_with_ut,
     isect_offset_encode,
     isect_tiles,
-    isect_tiles_geer,
     rasterize_to_pixels,
     rasterize_to_pixels_2dgs,
     rasterize_to_pixels_eval3d,
@@ -28,10 +26,7 @@ from .distributed import (
     all_to_all_int32,
     all_to_all_tensor_list,
 )
-from .geer.camera import get_camera_tanfov
-import numpy as np
-from.debug import *
-from datetime import datetime
+from .geer._preprocess import _prepare_geer
 from .utils import depth_to_normal, get_projection_matrix
 
 
@@ -291,6 +286,8 @@ def rasterization(
             `scales` will be ignored. [..., N, 3, 3], Default is None.
         with_ut: Whether to use Unscented Transform (UT) for projection. Default is False.
         with_geer: Whether to use 3DGEER for projection. Default is False.
+            When autograd is enabled, also returns the auxiliary densification
+            tensor in meta["geer_gradient"], whose gradient is populated by backward.
         with_eval3d: Whether to calculate Gaussian response in 3D world space, instead
             of 2D image space. Default is False.
         radial_coeffs: Opencv pinhole/fisheye radial distortion coefficients. Default is None.
@@ -311,8 +308,7 @@ def rasterization(
 
         **render_colors**: The rendered colors. [..., C, height, width, X].
         X depends on the `render_mode` and input `colors`. If `render_mode` is "RGB",
-        X is D; if `render_mode` is "D" or "ED", X is 1; if `render_mode` is "RGB+D" or
-        "RGB+ED", X is D+1.
+        X is D; for a depth-only mode X is 1; for an "RGB+" depth mode X is D+1.
 
         **render_alphas**: The rendered alphas. [..., C, height, width, 1].
 
@@ -464,7 +460,40 @@ def rasterization(
         # Silently change C from local #Cameras to global #Cameras.
         C = len(viewmats)
 
-    if with_ut:
+    tile_width = math.ceil(width / float(tile_size))
+    tile_height = math.ceil(height / float(tile_size))
+    geer_intersections = None
+    geer_gradient = None
+
+    if with_geer: # geer does not compute 2d projection
+        assert scales is not None
+        proj_results, geer_intersections, scales = _prepare_geer(
+            means=means,
+            quats=quats,
+            scales=scales,
+            opacities=opacities,
+            viewmats=viewmats,
+            Ks=Ks,
+            width=width,
+            height=height,
+            tile_size=tile_size,
+            tile_width=tile_width,
+            tile_height=tile_height,
+            near_plane=near_plane,
+            far_plane=far_plane,
+            radius_clip=radius_clip,
+            camera_model=camera_model,
+            rasterize_mode=rasterize_mode,
+            packed=packed,
+            radial_coeffs=radial_coeffs,
+            tangential_coeffs=tangential_coeffs,
+            thin_prism_coeffs=thin_prism_coeffs,
+            ftheta_coeffs=ftheta_coeffs,
+        )
+        if torch.is_grad_enabled():
+            geer_gradient = means.new_zeros(batch_dims + (C, N, 3), requires_grad=True)
+
+    elif with_ut:
         proj_results = fully_fused_projection_with_ut(
             means,
             quats,
@@ -735,51 +764,9 @@ def rasterization(
     else:  # RGB
         pass
     
-    tile_width = math.ceil(width / float(tile_size))
-    tile_height = math.ceil(height / float(tile_size))
     if with_geer:
-        assert packed == False
-        # Identify intersecting tiles
-        tanfovx, tanfovy, mirror_transformed_tan_theta, mirror_transformed_tan_phi = get_camera_tanfov(
-            camera_model,
-            Ks,
-            width,
-            height,
-            radial_coeffs=radial_coeffs,
-            tangential_coeffs=tangential_coeffs,
-            thin_prism_coeffs=thin_prism_coeffs,
-            ftheta_coeffs=ftheta_coeffs,
-        )
-        tiles_per_gauss, isect_ids, flatten_ids = isect_tiles_geer(
-            means=means,
-            quats=quats,
-            scales=scales,
-            opacities=opacities,
-            viewmats=viewmats,
-            camera_model=camera_model,
-            Ks=Ks,
-            radial_coeffs=radial_coeffs,
-            near_plane=near_plane,
-            far_plane=far_plane,
-            radius_clip=radius_clip,
-
-            mirror_transformed_tan_theta=mirror_transformed_tan_theta,
-            mirror_transformed_tan_phi=mirror_transformed_tan_phi,
-            image_width=width,
-            image_height=height,
-            tanfovx=tanfovx,
-            tanfovy=tanfovy,
-
-            tile_size=tile_size,
-            tile_width=tile_width,
-            tile_height=tile_height,
-
-            segmented=segmented,
-            packed=packed,
-            n_images=I,
-            image_ids=image_ids,
-            gaussian_ids=gaussian_ids
-        )
+        assert geer_intersections is not None
+        tiles_per_gauss, isect_ids, flatten_ids, pbf_bounds = geer_intersections
     else:
         tiles_per_gauss, isect_ids, flatten_ids = isect_tiles(
             means2d,
@@ -794,11 +781,7 @@ def rasterization(
             image_ids=image_ids,
             gaussian_ids=gaussian_ids
         )
-    
-    # print(np.allclose(isect_ids.cpu().numpy(), unsorted_isect_ids.cpu().numpy()))
-    
 
-    # print("rank", world_rank, "Before isect_offset_encode")
     isect_offsets = isect_offset_encode(isect_ids, I, tile_width, tile_height)
     isect_offsets = isect_offsets.reshape(batch_dims + (C, tile_height, tile_width))
 
@@ -815,10 +798,11 @@ def rasterization(
             "tile_size": tile_size,
             "n_batches": B,
             "n_cameras": C,
+            "geer_gradient": geer_gradient,
+            "pbf_bounds": pbf_bounds if with_geer else None,
         }
     )
 
-    # print("rank", world_rank, "Before rasterize_to_pixels")
     if colors.shape[-1] > channel_chunk:
         # slice into chunks
         n_chunks = (colors.shape[-1] + channel_chunk - 1) // channel_chunk
@@ -852,6 +836,8 @@ def rasterization(
                     ftheta_coeffs=ftheta_coeffs,
                     rolling_shutter=rolling_shutter,
                     viewmats_rs=viewmats_rs,
+                    pbf_bounds=pbf_bounds if with_geer else None,
+                    geer_gradient=geer_gradient,
                 )
             else:
                 render_colors_, render_alphas_ = rasterize_to_pixels(
@@ -895,6 +881,8 @@ def rasterization(
                 ftheta_coeffs=ftheta_coeffs,
                 rolling_shutter=rolling_shutter,
                 viewmats_rs=viewmats_rs,
+                pbf_bounds=pbf_bounds if with_geer else None,
+                geer_gradient=geer_gradient,
             )
         else:
             render_colors, render_alphas = rasterize_to_pixels(
@@ -921,29 +909,6 @@ def rasterization(
             dim=-1,
         )
     
-    if width > 1000 and False:
-        print(camera_model)
-        torch.set_printoptions(
-            precision=6,      # number of decimal places
-            sci_mode=False    # disable scientific notation
-        )
-        print("Num gaussians:", tiles_per_gauss.shape)
-        print("Num tiles:", tile_width * tile_height)
-        print("Num associations:", isect_ids.shape)
-        print("Image shape:", f"({width}, {height})")
-        # print("Final image shape", (render_colors * render_alphas).shape)
-        im = (np.clip(render_colors.cpu().numpy().squeeze(), 0, 1)*255).astype(np.uint8)
-        
-        # timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        # plt.imsave(f"/home/edward/Downloads/gsplat{timestamp}.jpg", im)
-        if not with_geer:
-            means3d_viewspace = torch.Tensor([])
-            aabb = torch.Tensor([])
-        # plot_projection(means3d_viewspace, aabb, means2d, Ks, width, height, omni_tan_theta, omni_tan_phi)
-        # print(f"({width}, {height})", tile_size)
-        # plot(im, ranges, tile_width, tile_height, isect_ids, flatten_ids, unsorted_isect_ids)
-        # plot_hist(isect_ids, flatten_ids)
-
     return render_colors, render_alphas, meta
 
 

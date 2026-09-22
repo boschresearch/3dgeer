@@ -1,52 +1,69 @@
+import math
+from collections import OrderedDict
+
 import numpy as np
 import torch
-import math
 
 from ..cuda._wrapper import compute_raymap
 
-def unpack_camera_intrinsics(K, fov_mod=1): # one image
-    """
-    Given a 3x3 camera intrinsic matrix K, extract the focal length and principal point.
-    The focal length is scaled by fov_mod to allow for adjusting the field of view.
 
-    Args:
-        K: A 3x3 numpy array representing the camera intrinsic matrix.
-        fov_mod: A scaling factor for the focal length to adjust the field of view.
-    Returns:
-        focal_length: A tuple (focal_length_x, focal_length_y) representing the focal length in pixels.
-        principal_point: A tuple (principal_point_x, principal_point_y) representing the principal point in pixels.
-    """
-    focal_length = (K[0, 0] * fov_mod, K[1, 1] * fov_mod)
-    principal_point = (K[0, 2], K[1, 2])
-
-    return focal_length, principal_point
-
-def compute_max_distance_to_border(image_size_component: float, principal_point_component: float) -> float:
-    """Given an image size component (x or y) and corresponding principal point component (x or y),
-    returns the maximum distance (in image domain units) from the principal point to either image boundary."""
-    center = 0.5 * image_size_component
-    if principal_point_component > center:
-        return principal_point_component
-    else:
-        return image_size_component - principal_point_component
+_TANFOV_CACHE_MAX_SIZE = 256
+_TANFOV_CACHE = OrderedDict()
 
 
-def compute_max_radius(image_size: np.ndarray, principal_point: np.ndarray) -> float:
-    """Compute the maximum radius from the principal point to the image boundaries."""
-    max_diag = np.array(
-        [
-            compute_max_distance_to_border(image_size[0], principal_point[0]),
-            compute_max_distance_to_border(image_size[1], principal_point[1]),
-        ]
+def _tensor_cache_key(value):
+    if value is None:
+        return None
+    tensor = torch.as_tensor(value).detach()
+    values = tensor.to(device="cpu", dtype=torch.float64).reshape(-1).tolist()
+    return tuple(tensor.shape), str(tensor.dtype), tuple(values)
+
+
+def _ftheta_cache_key(ftheta_coeffs):
+    if ftheta_coeffs is None:
+        return None
+    return (
+        ftheta_coeffs.reference_poly.value,
+        tuple(ftheta_coeffs.pixeldist_to_angle_poly),
+        tuple(ftheta_coeffs.angle_to_pixeldist_poly),
+        float(ftheta_coeffs.max_angle),
+        tuple(ftheta_coeffs.linear_cde),
     )
-    return np.linalg.norm(max_diag).item()
+
+
+def _camera_tanfov_cache_key(
+    camera_model,
+    Ks,
+    width,
+    height,
+    radial_coeffs,
+    tangential_coeffs,
+    thin_prism_coeffs,
+    ftheta_coeffs,
+):
+    return (
+        camera_model,
+        width,
+        height,
+        str(Ks.device),
+        _tensor_cache_key(Ks),
+        _tensor_cache_key(radial_coeffs),
+        _tensor_cache_key(tangential_coeffs),
+        _tensor_cache_key(thin_prism_coeffs),
+        _ftheta_cache_key(ftheta_coeffs),
+    )
+
+
+def _clear_camera_tanfov_cache():
+    _TANFOV_CACHE.clear()
+
 
 def _tanfov_from_raymap(raymap, min_rz: float = 1e-3, max_tan: float = 1e4):
     """Derive (tanfovx, tanfovy) from the actual ray-direction extents of a raymap.
 
-    Used in KB/EQ mode to replace the ``fov_mod``-based heuristic, which
+    Used for nonlinear cameras to replace the ``fov_mod``-based heuristic, which
     systematically under-estimates the FOV and causes the PBF frustum-clipping
-    in the CUDA kernel (``computePBF``/``computeAABB_*``) to cull valid
+    in the CUDA kernel (``computePBF``) to cull valid
     edge-of-image Gaussians during training.
 
     Parameters
@@ -68,9 +85,25 @@ def _tanfov_from_raymap(raymap, min_rz: float = 1e-3, max_tan: float = 1e4):
         when no valid pixels are found so the caller can keep its default.
     """
     if isinstance(raymap, torch.Tensor):
-        arr = raymap.detach().cpu().numpy() if raymap.is_cuda else raymap.numpy()
-    else:
-        arr = np.asarray(raymap, dtype=np.float32)
+        rays = raymap.detach()
+        rz = rays[..., 2]
+        valid = rz > min_rz
+        safe_rz = torch.where(valid, rz, torch.ones_like(rz))
+        invalid = torch.full((), -torch.inf, dtype=rays.dtype, device=rays.device)
+        tanfov = torch.stack(
+            (
+                torch.where(valid, rays[..., 0].abs() / safe_rz, invalid).amax(),
+                torch.where(valid, rays[..., 1].abs() / safe_rz, invalid).amax(),
+            )
+        ).cpu()
+        tanfovx, tanfovy = (float(value) for value in tanfov)
+        if not math.isfinite(tanfovx) or not math.isfinite(tanfovy):
+            return None, None
+        return min(max(tanfovx, 0.0), max_tan), min(
+            max(tanfovy, 0.0), max_tan
+        )
+
+    arr = np.asarray(raymap, dtype=np.float32)
 
     rz = arr[:, :, 2]
     valid = rz > min_rz
@@ -84,56 +117,47 @@ def _tanfov_from_raymap(raymap, min_rz: float = 1e-3, max_tan: float = 1e4):
     tanfovy = float(np.clip(tany[valid].max(), 0.0, max_tan))
     return tanfovx, tanfovy
 
-def focal2fov(focal, pixels):
-    return 2*math.atan(pixels/(2*focal))
-
-def focal2fov2(focal, pixels):
-    return pixels / focal
-
-def focal2halffov2(focal, pixels):
-    return pixels / 2 / focal
-
-def fov_sample2ray(fovx, fovy, interval):
-    """Build symmetric 1-D arrays of ray-direction half-angles in [-fov, +fov].
-
-    Each element is spaced `interval` radians apart, starting at interval/2.
-    Returns (theta_arr, phi_arr) as sorted float tensors.
-    """
-    theta_arr = torch.arange(interval / 2, fovx, interval)
-    theta_arr, _ = torch.sort(torch.cat((-theta_arr, theta_arr)))
-    phi_arr = torch.arange(interval / 2, fovy, interval)
-    phi_arr, _ = torch.sort(torch.cat((-phi_arr, phi_arr)))
-
-    return theta_arr.float(), phi_arr.float()
-
-def mirror_transform(m, z, xi=0.0): #1.1
-    """Apply the omnidirectional mapping to a tangent array m.
-
-    Mirror transform tan(θ); reference: Appendix D.2.
-    """
-    return m / (1+xi*(z/(torch.abs(z)))*(1+m**2)**0.5)
-
 def get_camera_tanfov(
     camera_model,
     Ks,
     width,
     height,
-    step=0.002,
     fov_mod=1,
-    data_device="cuda",
     radial_coeffs=None,
     tangential_coeffs=None,
     thin_prism_coeffs=None,
     ftheta_coeffs=None,
 ):
+    """Return tangent FOV extents for one supported GEER camera."""
     # Ks [..., C, 3, 3]
     K = Ks.to("cpu").squeeze() # one image
 
-    focal_length, principal_point = unpack_camera_intrinsics(K, fov_mod)
+    focal_length = (K[0, 0] * fov_mod, K[1, 1] * fov_mod)
 
-    if camera_model == "pinhole":
-        return width / (2 * focal_length[0]), height / (2 * focal_length[1]), None, None
-    elif camera_model == "fisheye":
+    has_pinhole_distortion = (
+        radial_coeffs is not None
+        or tangential_coeffs is not None
+        or thin_prism_coeffs is not None
+    )
+
+    if camera_model == "pinhole" and not has_pinhole_distortion:
+        return width / (2 * focal_length[0]), height / (2 * focal_length[1])
+    elif camera_model in ("pinhole", "fisheye", "ftheta"):
+        cache_key = _camera_tanfov_cache_key(
+            camera_model,
+            Ks,
+            width,
+            height,
+            radial_coeffs,
+            tangential_coeffs,
+            thin_prism_coeffs,
+            ftheta_coeffs,
+        )
+        cached = _TANFOV_CACHE.get(cache_key)
+        if cached is not None:
+            _TANFOV_CACHE.move_to_end(cache_key)
+            return cached
+
         raymap = compute_raymap(
             Ks,
             width,
@@ -146,29 +170,15 @@ def get_camera_tanfov(
         ).squeeze() # [H,W,3] assume one image
 
         tanfovx, tanfovy = _tanfov_from_raymap(raymap)
-        return tanfovx, tanfovy, None, None
-    
-    else: # BEAP (TODO)
-        FoVx = focal2fov(focal_length[0], width)
-        FoVy = focal2fov(focal_length[1], height)
-        arr_theta, arr_phi = fov_sample2ray(FoVx/2, FoVy/2, step)
+        if tanfovx is None or tanfovy is None:
+            raise ValueError(
+                f"No forward-facing image rays found for GEER {camera_model} camera"
+            )
+        _TANFOV_CACHE[cache_key] = (tanfovx, tanfovy)
+        _TANFOV_CACHE.move_to_end(cache_key)
+        if len(_TANFOV_CACHE) > _TANFOV_CACHE_MAX_SIZE:
+            _TANFOV_CACHE.popitem(last=False)
+        return tanfovx, tanfovy
 
-        cos_theta = torch.cos(arr_theta)
-        cos_phi = torch.cos(arr_phi)
-
-        cos_theta = torch.where(torch.abs(cos_theta) < 1e-7, torch.full_like(cos_theta, 1e-7), cos_theta).to(data_device)
-        cos_phi = torch.where(torch.abs(cos_phi) < 1e-7, torch.full_like(cos_phi, 1e-7), cos_phi).to(data_device)
-
-        tan_theta = torch.tan(arr_theta).to(data_device)
-        tan_phi = torch.tan(arr_phi).to(data_device)
-
-        mirror_transformed_tan_theta = mirror_transform(tan_theta, cos_theta).to(data_device)
-        mirror_transformed_tan_phi = mirror_transform(tan_phi, cos_phi).to(data_device)
-
-        tanfovx = np.tan(FoVx * 0.5)
-        tanfovy = np.tan(FoVy * 0.5)
-
-        print("Mirror Tan Length", len(mirror_transformed_tan_theta), len(mirror_transformed_tan_phi))
-        print("Image Dimensions", width, height)
-
-        return tanfovx, tanfovy, mirror_transformed_tan_theta, mirror_transformed_tan_phi
+    else:
+        raise ValueError(f"Camera model not supported by GEER: {camera_model}")

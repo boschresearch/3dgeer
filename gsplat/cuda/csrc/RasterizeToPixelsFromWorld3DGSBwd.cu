@@ -49,6 +49,7 @@ __global__ void rasterize_to_pixels_from_world_3dgs_bwd_kernel(
     // intersections
     const int32_t *__restrict__ tile_offsets, // [B, C, tile_height, tile_width]
     const int32_t *__restrict__ flatten_ids,  // [n_isects]
+    const int32_t *__restrict__ pbf_bounds,   // [B, C, N, 4], optional
     // fwd outputs
     const scalar_t
         *__restrict__ render_alphas,      // [B, C, image_height, image_width, 1]
@@ -63,7 +64,8 @@ __global__ void rasterize_to_pixels_from_world_3dgs_bwd_kernel(
     vec4 *__restrict__ v_quats,        // [B, N, 4]
     vec3 *__restrict__ v_scales,       // [B, N, 3]
     scalar_t *__restrict__ v_colors,   // [B, C, N, CDIM] or [nnz, CDIM]
-    scalar_t *__restrict__ v_opacities // [B, C, N] or [nnz]
+    scalar_t *__restrict__ v_opacities, // [B, C, N] or [nnz]
+    vec3 *__restrict__ v_geer_gradient  // [B, C, N, 3], optional
 ) {
     auto block = cg::this_thread_block();
     uint32_t iid = block.group_index().x;
@@ -228,7 +230,6 @@ __global__ void rasterize_to_pixels_from_world_3dgs_bwd_kernel(
             // TODO: only support 1 camera for now so it is ok to abuse the index.
             int32_t isect_id = flatten_ids[idx]; // flatten index in [B * C * N] or [nnz]
             int32_t isect_bid = isect_id / (C * N);   // intersection batch index
-            // int32_t isect_cid = (isect_id / N) % C;   // intersection camera index
             int32_t isect_gid = isect_id % N;         // intersection gaussian index
             id_batch[tr] = isect_id;
             const vec3 xyz = means[isect_bid * N + isect_gid];
@@ -250,6 +251,14 @@ __global__ void rasterize_to_pixels_from_world_3dgs_bwd_kernel(
             bool valid = done;
             if (batch_end - t > bin_final) {
                 valid = 0;
+            }
+            if (valid && pbf_bounds != nullptr) {
+                const int32_t isect_id = id_batch[t];
+                const int32_t *bounds = pbf_bounds + 4 * isect_id;
+                if (j < bounds[0] || j >= bounds[1] ||
+                    i < bounds[2] || i >= bounds[3]) {
+                    valid = false;
+                }
             }
             float alpha;
             float opac;
@@ -291,7 +300,7 @@ __global__ void rasterize_to_pixels_from_world_3dgs_bwd_kernel(
                 power = -0.5f * grayDist;
 
                 vis = __expf(power);
-                alpha = min(0.999f, opac * vis);
+                alpha = min(0.99f, opac * vis);
                 if (power > 0.f || alpha < 1.f / 255.f) {
                     valid = false;
                 }
@@ -306,6 +315,7 @@ __global__ void rasterize_to_pixels_from_world_3dgs_bwd_kernel(
             vec3 v_scale_local = {0.f, 0.f, 0.f};
             vec4 v_quat_local = {0.f, 0.f, 0.f, 0.f};
             float v_opacity_local = 0.f;
+            vec3 v_geer_gradient_local = {0.f, 0.f, 0.f};
             // initialize everything to 0, only set if the lane is valid
             if (valid) {
                 // compute the current T for this gaussian
@@ -336,7 +346,7 @@ __global__ void rasterize_to_pixels_from_world_3dgs_bwd_kernel(
                     v_alpha += -T_final * ra * accum;
                 }
 
-                if (opac * vis <= 0.999f) {
+                if (opac * vis <= 0.99f) {
                     const float v_vis = opac * v_alpha;
                     float v_gradDist = -0.5f * vis * v_vis;
                     vec3 v_gcrod = 2.0f * v_gradDist * gcrod;
@@ -346,6 +356,16 @@ __global__ void rasterize_to_pixels_from_world_3dgs_bwd_kernel(
                     mat3 v_Mt = glm::outerProduct(v_grd, ray_d) + 
                         glm::outerProduct(v_gro, o_minus_mu);
                     vec3 v_o_minus_mu = glm::transpose(Mt) * v_gro;
+
+                    if (v_geer_gradient != nullptr) {
+                        const vec3 v_gro_abs = {
+                            fabsf(v_gro.x), fabsf(v_gro.y), fabsf(v_gro.z)
+                        };
+                        const float proxy_scale =
+                            (glm::dot(o_minus_mu, o_minus_mu) + 1.f) * 3e-1f;
+                        v_geer_gradient_local =
+                            (glm::transpose(Mt) * v_gro_abs) * proxy_scale;
+                    }
 
                     v_mean_local += -v_o_minus_mu;
                     quat_scale_to_preci_half_vjp(
@@ -364,10 +384,12 @@ __global__ void rasterize_to_pixels_from_world_3dgs_bwd_kernel(
             warpSum(v_scale_local, warp);
             warpSum(v_quat_local, warp);
             warpSum(v_opacity_local, warp);
+            if (v_geer_gradient != nullptr) {
+                warpSum(v_geer_gradient_local, warp);
+            }
             if (warp.thread_rank() == 0) {
                 int32_t isect_id = id_batch[t]; // flatten index in [B * C * N] or [nnz]
                 int32_t isect_bid = isect_id / (C * N);   // intersection batch index
-                // int32_t isect_cid = (isect_id / N) % C;   // intersection camera index
                 int32_t isect_gid = isect_id % N;         // intersection gaussian index
                 float *v_rgb_ptr = (float *)(v_colors) + CDIM * isect_id;
 #pragma unroll
@@ -392,6 +414,14 @@ __global__ void rasterize_to_pixels_from_world_3dgs_bwd_kernel(
                 gpuAtomicAdd(v_quat_ptr + 3, v_quat_local.w);
 
                 gpuAtomicAdd(v_opacities + isect_id, v_opacity_local);
+                if (v_geer_gradient != nullptr) {
+                    float *v_proxy_ptr = reinterpret_cast<float *>(
+                        v_geer_gradient + isect_id
+                    );
+                    gpuAtomicAdd(v_proxy_ptr, v_geer_gradient_local.x);
+                    gpuAtomicAdd(v_proxy_ptr + 1, v_geer_gradient_local.y);
+                    gpuAtomicAdd(v_proxy_ptr + 2, v_geer_gradient_local.z);
+                }
             }
         }
     }
@@ -427,6 +457,7 @@ void launch_rasterize_to_pixels_from_world_3dgs_bwd_kernel(
     // intersections
     const at::Tensor tile_offsets,    // [..., C, tile_height, tile_width]
     const at::Tensor flatten_ids,     // [n_isects]
+    const at::optional<at::Tensor> pbf_bounds, // [..., C, N, 4], optional
     // forward outputs
     const at::Tensor render_alphas,   // [..., C, image_height, image_width, 1]
     const at::Tensor last_ids,        // [..., C, image_height, image_width]
@@ -438,7 +469,8 @@ void launch_rasterize_to_pixels_from_world_3dgs_bwd_kernel(
     at::Tensor v_quats,      // [..., N, 4]
     at::Tensor v_scales,     // [..., N, 3]
     at::Tensor v_colors,     // [..., C, N, 3] or [nnz, 3]
-    at::Tensor v_opacities   // [..., C, N] or [nnz]
+    at::Tensor v_opacities,  // [..., C, N] or [nnz]
+    const at::optional<at::Tensor> v_geer_gradient // [..., C, N, 3], optional
 ) {
     bool packed = opacities.dim() == 1;
     assert (packed == false); // only support non-packed for now
@@ -524,6 +556,9 @@ void launch_rasterize_to_pixels_from_world_3dgs_bwd_kernel(
             // intersections
             tile_offsets.data_ptr<int32_t>(),
             flatten_ids.data_ptr<int32_t>(),
+            pbf_bounds.has_value()
+                ? pbf_bounds.value().data_ptr<int32_t>()
+                : nullptr,
             render_alphas.data_ptr<float>(),
             last_ids.data_ptr<int32_t>(),
             v_render_colors.data_ptr<float>(),
@@ -533,7 +568,12 @@ void launch_rasterize_to_pixels_from_world_3dgs_bwd_kernel(
             reinterpret_cast<vec4 *>(v_quats.data_ptr<float>()),
             reinterpret_cast<vec3 *>(v_scales.data_ptr<float>()),
             v_colors.data_ptr<float>(),
-            v_opacities.data_ptr<float>()
+            v_opacities.data_ptr<float>(),
+            v_geer_gradient.has_value()
+                ? reinterpret_cast<vec3 *>(
+                      v_geer_gradient.value().data_ptr<float>()
+                  )
+                : nullptr
         );
 }
 
@@ -565,6 +605,7 @@ void launch_rasterize_to_pixels_from_world_3dgs_bwd_kernel(
         const at::Tensor fisheye_max_angles,                                  \
         const at::Tensor tile_offsets,                                         \
         const at::Tensor flatten_ids,                                          \
+        const at::optional<at::Tensor> pbf_bounds,                            \
         const at::Tensor render_alphas,                                        \
         const at::Tensor last_ids,                                             \
         const at::Tensor v_render_colors,                                      \
@@ -573,7 +614,8 @@ void launch_rasterize_to_pixels_from_world_3dgs_bwd_kernel(
         at::Tensor v_quats,                                                    \
         at::Tensor v_scales,                                                   \
         at::Tensor v_colors,                                                   \
-        at::Tensor v_opacities                                                 \
+        at::Tensor v_opacities,                                                \
+        const at::optional<at::Tensor> v_geer_gradient                        \
     );
 
 __INS__(1)

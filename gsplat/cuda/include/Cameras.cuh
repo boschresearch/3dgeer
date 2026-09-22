@@ -1137,12 +1137,15 @@ public:
         // These FOV-clamped projections will be marked as *invalid*
         auto const theta = theta_full < parameters.dist.max_angle ? theta_full : parameters.dist.max_angle;
 
-        // Evaluate forward polynomial, giving delta = f(theta) factors
-        bool converged;
+        // Evaluate forward polynomial, giving delta = f(theta) factors.
+        // The Newton convergence flag is advisory here: FP32 polynomial
+        // evaluation can leave |dx| above the fixed threshold even when the
+        // resulting pixel radius is accurate. Rejecting that result produces
+        // false-invalid concentric bands in F-Theta projections.
+        bool converged = false;
         float delta;
         if (parameters.dist.reference_poly == FThetaCameraDistortionParameters::PolynomialType::PIXELDIST_TO_ANGLE) {
             // bw poly is reference, evaluate its inverse via Newton-based inversion
-            converged = false;
             delta = eval_poly_inverse_horner_newton<N_NEWTON_ITERATIONS>( 
                       PolynomialProxy<PolynomialType::FULL, 6>{parameters.dist.pixeldist_to_angle_poly},
                       PolynomialProxy<PolynomialType::FULL, 5>{dreference_poly},
@@ -1150,12 +1153,7 @@ public:
                       theta, converged);
         } else {
             // fw is reference, evaluate it directly
-            converged = true;
             delta = eval_poly_horner(parameters.dist.angle_to_pixeldist_poly, theta); 
-        }
-
-        if (!converged) {
-            return {{0.f, 0.f}, false};
         }
 
         // Apply linear term A=[c,d;e,1] to f(theta)-weighted normalized 2d vectors, relative to principal point

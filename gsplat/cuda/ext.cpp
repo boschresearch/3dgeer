@@ -71,7 +71,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("rasterize_to_indices_2dgs", &gsplat::rasterize_to_indices_2dgs);
 
     m.def("projection_ut_3dgs_fused", &gsplat::projection_ut_3dgs_fused);
-    m.def("projection_geer_3dgs_fused", &gsplat::projection_geer_3dgs_fused);
     m.def("compute_raymap", &gsplat::compute_raymap);
     m.def("rasterize_to_pixels_from_world_3dgs_fwd", &gsplat::rasterize_to_pixels_from_world_3dgs_fwd);
     m.def("rasterize_to_pixels_from_world_3dgs_bwd", &gsplat::rasterize_to_pixels_from_world_3dgs_bwd);

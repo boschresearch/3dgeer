@@ -1,22 +1,17 @@
-#include <ATen/TensorUtils.h>
+#include <ATen/Functions.h>
 #include <ATen/core/Tensor.h>
-#include <c10/cuda/CUDAGuard.h> // for DEVICE_GUARD
 #include <tuple>
 
-#include <ATen/Functions.h>
-#include <ATen/NativeFunctions.h>
-
-#include "Common.h"    // where all the macros are defined
-#include "IntersectGEER.h" // where the launch function is declared
+#include "Common.h"
+#include "IntersectGEER.h"
 #include "Intersect.h"
-#include "Ops.h"       // a collection of all gsplat operators
-
-#include <cstdio>
+#include "Ops.h"
 
 namespace gsplat {
 
-// TODO: Integrate camera parallelization
-std::tuple<at::Tensor, at::Tensor, at::Tensor> intersect_tile_geer(
+// TODO: Integrate camera parallelization.
+std::tuple<at::Tensor, at::Tensor, at::Tensor, at::Tensor>
+intersect_tile_geer(
     const int P, // N, num_gaussians
 
     const at::Tensor means,                // [N, 3]
@@ -28,280 +23,154 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> intersect_tile_geer(
     const CameraModelType camera_model,
     const at::Tensor Ks, // [C, 3, 3]
     const at::optional<at::Tensor> radial_coeffs, // [C, 4] or [C, 6]
+    const at::optional<at::Tensor> tangential_coeffs, // [C, 2]
+    const at::optional<at::Tensor> thin_prism_coeffs, // [C, 4]
+    const FThetaCameraDistortionParameters ftheta_coeffs,
     const float near_plane,
 	const float far_plane,
     const float radius_clip,
 
-    const at::optional<at::Tensor> mirror_transformed_tan_theta, // tan_theta of mirror transformed PBF
-    const at::optional<at::Tensor> mirror_transformed_tan_phi, // tan_phi of mirror transformed PBF
     const int W,
     const int H,
     const float tan_fovx, float tan_fovy, // tan of fovx and fovy
 
     const int tile_size, const int tile_width, const int tile_height,
-    // const at::Tensor means2d,                    // [..., N, 2] or [nnz, 2]
-    // const at::Tensor radii,                      // [..., N, 2] or [nnz, 2]
-    // const at::Tensor depths,                     // [..., N] or [nnz]
-    // const at::optional<at::Tensor> image_ids,    // [nnz]
-    // const at::optional<at::Tensor> gaussian_ids, // [nnz]
-    // const uint32_t I,
-    // const uint32_t tile_size,
-    // const uint32_t tile_width,
-    // const uint32_t tile_height,
     const bool sort
-    // const bool segmented
 ) {
     auto opt = means.options();
 
-    at::Tensor default_radial_coeffs;
+    at::Tensor normalized_radial_coeffs;
+    at::Tensor normalized_tangential_coeffs;
+    at::Tensor normalized_thin_prism_coeffs;
 
     if (radial_coeffs.has_value()) {
         auto coeffs = radial_coeffs.value();
-
-        int expected = (camera_model == CameraModelType::PINHOLE) ? 6 : 4;
+        TORCH_CHECK(
+            camera_model == CameraModelType::PINHOLE ||
+                camera_model == CameraModelType::FISHEYE,
+            "Radial coefficients are only valid for pinhole and fisheye cameras"
+        );
+        int expected = camera_model == CameraModelType::PINHOLE ? 6 : 4;
 
         TORCH_CHECK(
             coeffs.numel() == expected,
             "Expected ", expected, " radial coeffs but got ", coeffs.numel()
         );
 
-        default_radial_coeffs = coeffs
+        normalized_radial_coeffs = coeffs
             .to(opt.device())
             .to(at::kFloat)
             .view({-1})              // force 1D
             .contiguous();
 
-    } else if (camera_model == CameraModelType::PINHOLE) {
-        default_radial_coeffs = at::zeros({6}, opt.dtype(at::kFloat));
-
     } else if (camera_model == CameraModelType::FISHEYE) {
-        default_radial_coeffs = at::zeros({4}, opt.dtype(at::kFloat));
-    } else {
-        TORCH_CHECK(false, "Camera model not supported yet");
+        normalized_radial_coeffs = at::zeros({4}, opt.dtype(at::kFloat));
     }
 
-    // CUDA FN 1
-    // for all gaussians computePBF --> AABB
-    // for all gaussians convert AABBs into BEAP/KB space
+    if (tangential_coeffs.has_value()) {
+        TORCH_CHECK(
+            camera_model == CameraModelType::PINHOLE,
+            "Tangential coefficients are only valid for pinhole cameras"
+        );
+        TORCH_CHECK(
+            tangential_coeffs.value().numel() == 2,
+            "Expected 2 tangential coeffs but got ",
+            tangential_coeffs.value().numel()
+        );
+        normalized_tangential_coeffs = tangential_coeffs.value()
+            .to(opt.device()).to(at::kFloat).view({-1}).contiguous();
+    }
 
+    if (thin_prism_coeffs.has_value()) {
+        TORCH_CHECK(
+            camera_model == CameraModelType::PINHOLE,
+            "Thin-prism coefficients are only valid for pinhole cameras"
+        );
+        TORCH_CHECK(
+            thin_prism_coeffs.value().numel() == 4,
+            "Expected 4 thin-prism coeffs but got ",
+            thin_prism_coeffs.value().numel()
+        );
+        normalized_thin_prism_coeffs = thin_prism_coeffs.value()
+            .to(opt.device()).to(at::kFloat).view({-1}).contiguous();
+    }
+
+    TORCH_CHECK(
+        camera_model == CameraModelType::PINHOLE ||
+            camera_model == CameraModelType::FISHEYE ||
+            camera_model == CameraModelType::FTHETA,
+        "Camera model not supported by GEER tile intersection"
+    );
+    if (camera_model == CameraModelType::FTHETA) {
+        TORCH_CHECK(
+            ftheta_coeffs.max_angle > 0.f,
+            "F-theta GEER rendering requires ftheta_coeffs with max_angle > 0"
+        );
+    }
+
+    // Compute each Gaussian's PBF, pixel bounds, and tile count.
     at::Tensor radii = at::empty({P}, opt.dtype(at::kInt));
-    at::Tensor pbf_id = at::empty({P*4}, opt.dtype(at::kInt));
-    at::Tensor beap_xxyy = at::empty({P*4}, opt.dtype(at::kFloat));
-    at::Tensor means3D_view = at::empty({P*3}, opt.dtype(at::kFloat));
+    at::Tensor pbf_id = at::empty({P * 4}, opt.dtype(at::kInt));
     at::Tensor depths = at::empty({P}, opt.dtype(at::kFloat));
-    at::Tensor w2o = at::empty({P*9}, opt.dtype(at::kFloat));
     at::Tensor tiles_per_gauss = at::empty({P}, opt.dtype(at::kInt));
-    
-    preprocess_gaussians( // 3DGEER: FORWARD::preprocess
-        P, // int P, // aka N
-        // int D, int M,
-        means.contiguous().data_ptr<float>(), // const float* means3D,
-        (glm::vec3*) scales.contiguous().data_ptr<float>(), // const glm::vec3* scales,
-        scale_modifier, // const float scale_modifier,
-        (glm::vec4*) quats.contiguous().data_ptr<float>(), // const glm::vec4* rotations,
+
+    preprocess_gaussians(
+        P,
+        means.contiguous().data_ptr<float>(),
+        (glm::vec3*) scales.contiguous().data_ptr<float>(),
+        scale_modifier,
+        (glm::vec4*) quats.contiguous().data_ptr<float>(),
         Ks.contiguous().data_ptr<float>(),
-        opacities.contiguous().data_ptr<float>(), // const float* opacities,
-        // const float* shs,
-        // bool* clamped,
-        // const float* colors_precomp,
-        viewmats0.contiguous().data_ptr<float>(), // const float* viewmatrix,
-        mirror_transformed_tan_theta.has_value() ? mirror_transformed_tan_theta.value().contiguous().data_ptr<float>() : nullptr, // const float* mirror_transformed_tan_theta, // tan_theta of mirror transformed PBF 
-        mirror_transformed_tan_phi.has_value() ? mirror_transformed_tan_phi.value().contiguous().data_ptr<float>() : nullptr, // const float* mirror_transformed_tan_phi, // tan_phi of mirror transformed PBF 
-        // const glm::vec3* cam_pos,
-        W, H, // const int W, int H,
-        tan_fovx, tan_fovy, // const float tan_fovx, float tan_fovy,
-        // const float focal_x, float focal_y,
-        // const float principal_x, float principal_y,
-        camera_model, // const CameraModelType camera_model,
-        default_radial_coeffs.contiguous().data_ptr<float>(), // const float* kb_coeff,
+        opacities.contiguous().data_ptr<float>(),
+        viewmats0.contiguous().data_ptr<float>(),
+        W, H, tan_fovx, tan_fovy, camera_model,
+        normalized_radial_coeffs.defined() ? normalized_radial_coeffs.data_ptr<float>() : nullptr,
+        normalized_tangential_coeffs.defined() ? normalized_tangential_coeffs.data_ptr<float>() : nullptr,
+        normalized_thin_prism_coeffs.defined() ? normalized_thin_prism_coeffs.data_ptr<float>() : nullptr,
+        ftheta_coeffs,
         near_plane, far_plane, radius_clip,
         tile_size, tile_width, tile_height,
-
-        // Outputs (except xmap, ymap, h_opacity, prefiltered, and antialiasing)
-        radii.contiguous().data_ptr<int>(), // int* radii,
-        pbf_id.contiguous().data_ptr<int>(), // int* pbf_id,
-        (float4*) beap_xxyy.contiguous().data_ptr<float>(), // float4* beap_xxyy,
-        nullptr, // const float* xmap, // Set to nullptr for now until KB is reintegrated
-        nullptr, // const float* ymap, // Set to nullptr for now until KB is reintegrated
-        (float3*) means3D_view.contiguous().data_ptr<float>(), // float3* points_xyz_view,
-        depths.contiguous().data_ptr<float>(), // float* depths,
-        // // float* rgb,
-        // // float2* h_opacity, // Input
-        (float3*) w2o.contiguous().data_ptr<float>(), // float3* w2o,
-        // tile_grid, // const dim3 grid,
-        tiles_per_gauss.contiguous().data_ptr<int>() // uint32_t* tiles_touched
-        // bool prefiltered, // Flag
-        // // bool antialiasing
+        radii.data_ptr<int>(),
+        pbf_id.data_ptr<int>(),
+        depths.data_ptr<float>(),
+        tiles_per_gauss.data_ptr<int>()
     );
-
-    // auto radii_cpu = radii.cpu();
-    // auto pbf_id_cpu = pbf_id.cpu();
-    // auto beap_xxyy_cpu = beap_xxyy.cpu();
-    // auto depths_cpu = depths.cpu();
-    // auto tiles_touched_cpu = tiles_per_gauss.cpu();
-    // auto w2o_cpu = w2o.cpu();
-    // auto means3D_view_cpu = means3D_view.cpu();
-
-    // auto radii_ptr = radii_cpu.data_ptr<int>();
-    // auto pbf_id_ptr = pbf_id_cpu.data_ptr<int>();
-    // auto beap_xxyy_ptr = (float4*) beap_xxyy_cpu.data_ptr<float>();
-    // auto depths_ptr = depths_cpu.data_ptr<float>();
-    // auto tiles_touched_ptr = tiles_touched_cpu.data_ptr<int>();
-    // auto w2o_ptr = (float3*) w2o_cpu.data_ptr<float>();
-    // auto means3D_view_ptr = (float3*) means3D_view_cpu.data_ptr<float>();
-
-
-    // for (int idx=39755; idx<39760; idx++) {
-    //     // if (depths_ptr[idx] != 0.0) {
-    //     printf(
-    //         "%d: depth %f, radii %d, aabb %d %d %d %d, beap %f %f %f %f, touched %d, w2o [%f %f %f] [%f %f %f] [%f %f %f], mean [%f %f %f]\n",
-    //         idx, depths_ptr[idx], radii_ptr[idx],
-    //         pbf_id_ptr[idx * 4], pbf_id_ptr[idx * 4 + 1], pbf_id_ptr[idx * 4 + 2], pbf_id_ptr[idx * 4 + 3],
-    //         beap_xxyy_ptr[idx].x, beap_xxyy_ptr[idx].y, beap_xxyy_ptr[idx].z, beap_xxyy_ptr[idx].w, tiles_touched_ptr[idx],
-    //         w2o_ptr[3*idx].x, w2o_ptr[3*idx].y, w2o_ptr[3*idx].z,
-    //         w2o_ptr[3*idx+1].x, w2o_ptr[3*idx+1].y, w2o_ptr[3*idx+1].z,
-    //         w2o_ptr[3*idx+2].x, w2o_ptr[3*idx+2].y, w2o_ptr[3*idx+2].z,
-    //         means3D_view_ptr[idx].x, means3D_view_ptr[idx].y, means3D_view_ptr[idx].z
-    //     );
-    //     // }
-    // }
-
-    // auto test_cpu = tiles_touched.cpu();
-    // uint32_t* test_ptr = test_cpu.data_ptr<uint32_t>();
-    // printf(
-    //     "test: (%d, %d, %d, %d)\n",
-    //     test_ptr[980558],
-    //     test_ptr[963868],
-    //     test_ptr[981941],
-    //     test_ptr[981331]
-    // );
-
-    // CUDA FN 2
-    // duplicate to keys in gsplat format
-
-    // auto tiles_flat = tiles_per_gauss.view({-1});
-    // at::Tensor neg_mask = tiles_flat.lt(0);
-
-    // if (neg_mask.any().item<bool>()) {
-    //     printf("tiles_per_gauss contains negative values!\n");
-
-    //     // get indices of negative entries
-    //     auto neg_indices = neg_mask.nonzero().squeeze();
-
-    //     if (neg_indices.dim() == 0) {
-    //         neg_indices = neg_indices.unsqueeze(0);
-    //     }
-
-    //     // gather the negative values
-    //     auto neg_values = tiles_flat.index_select(0, neg_indices);
-
-    //     auto pbf_id_cpu = pbf_id.cpu();
-    //     auto pbf_id_ptr = pbf_id_cpu.data_ptr<int>();
-
-    //     auto beap_xxyy_cpu = beap_xxyy.cpu();
-    //     auto beap_xxyy_ptr = (float4*) beap_xxyy_cpu.data_ptr<float>();
-
-
-    //     int n_print = std::min<int>(neg_values.numel(), 10);
-    //     printf("First %d negative entries:\n", n_print);
-    //     for (int i = 0; i < n_print; ++i) {
-    //         int idx = neg_indices[i].item<int>();
-    //         int val = neg_values[i].item<int>();
-    //         printf("idx %d: %d (%f, %f, %f, %f) -> (%d, %d, %d, %d) \n", idx, val,
-    //         beap_xxyy_ptr[idx].x, beap_xxyy_ptr[idx].y, beap_xxyy_ptr[idx].z, beap_xxyy_ptr[idx].w,
-    //         pbf_id_ptr[4*idx], pbf_id_ptr[4*idx+1], pbf_id_ptr[4*idx+2], pbf_id_ptr[4*idx+3]);
-    //     }
-    // } else {
-    //     printf("tiles_per_gauss has no negative values.\n");
-    // }
-
-
 
     at::Tensor cum_tiles_per_gauss = at::cumsum(tiles_per_gauss.view({-1}).to(at::kLong), 0);
     int64_t n_isects = cum_tiles_per_gauss[cum_tiles_per_gauss.size(0) - 1].item<int64_t>();
-
     at::Tensor isect_ids = at::empty({n_isects}, opt.dtype(at::kLong));
     at::Tensor flatten_ids = at::empty({n_isects}, opt.dtype(at::kInt));
 
     uint32_t n_tiles = tile_width * tile_height;
-
-    int I = 1; // TODO
-    uint32_t image_n_bits = (uint32_t)floor(log2(I)) + 1;
+    uint32_t image_n_bits = 1; // One camera.
     uint32_t tile_n_bits = (uint32_t)floor(log2(n_tiles)) + 1;
     assert(image_n_bits + tile_n_bits <= 32);
 
     duplicate_with_keys(
-		P,
-		(float3*) means3D_view.contiguous().data_ptr<float>(), // geomState.means3D_view,
-		(float3*) w2o.contiguous().data_ptr<float>(), // geomState.w2o,
-		// geomState.h_opacity,
-		depths.contiguous().data_ptr<float>(), // geomState.depths,
-		cum_tiles_per_gauss.contiguous().data_ptr<int64_t>(), // geomState.point_offsets, // TODO
-
-		// binningState.point_list_keys_unsorted,
-		// binningState.point_list_unsorted,
+        P,
+        depths.data_ptr<float>(),
+        cum_tiles_per_gauss.data_ptr<int64_t>(),
         isect_ids.data_ptr<int64_t>(),
         flatten_ids.data_ptr<int32_t>(),
-
-		radii.contiguous().data_ptr<int>(), // radii,
-		(int4*) pbf_id.contiguous().data_ptr<int>(), // (int4*) geomState.aabb,
-		(float4*) beap_xxyy.contiguous().data_ptr<float>(), // geomState.beap_xxyy,
-		nullptr, nullptr, // xmap, ymap,
-		W, H, // width, height,
-		tiles_per_gauss.contiguous().data_ptr<int>(), // geomState.tiles_touched,
-        tile_size, tile_width, tile_height, tile_n_bits
-		// tile_grid
+        radii.data_ptr<int>(),
+        (int4*) pbf_id.data_ptr<int>(),
+        tiles_per_gauss.data_ptr<int>(),
+        tile_size, tile_width, tile_height
     );
 
-    // CUDA FN 3
-    // radix sort
-    // optionally sort the Gaussians by isect_ids
-    at::Tensor ranges = at::zeros({n_tiles*2}, opt.dtype(at::kLong));
     if (n_isects && sort) {
         at::Tensor isect_ids_sorted = at::empty_like(isect_ids);
         at::Tensor flatten_ids_sorted = at::empty_like(flatten_ids);
-        // if (segmented) {
-        //     segmented_radix_sort_double_buffer(
-        //         n_isects,
-        //         I,
-        //         image_n_bits,
-        //         tile_n_bits,
-        //         offsets,
-        //         isect_ids,
-        //         flatten_ids,
-        //         isect_ids_sorted,
-        //         flatten_ids_sorted
-        //     );
-        // } else {
-        // printf("Sorting...");
         radix_sort_double_buffer(
-            n_isects,
-            image_n_bits,
-            tile_n_bits,
-            isect_ids,
-            flatten_ids,
-            isect_ids_sorted, 
-            flatten_ids_sorted
+            n_isects, image_n_bits, tile_n_bits,
+            isect_ids, flatten_ids, isect_ids_sorted, flatten_ids_sorted
         );
-        // }
-
-        if (n_isects > 0) {
-            // printf("Getting ranges...");
-            identify_tile_ranges(
-                n_isects,
-                isect_ids_sorted.contiguous().data_ptr<int64_t>(),
-                ranges.contiguous().data_ptr<int64_t>()
-            );
-        }
-
-        return std::make_tuple(tiles_per_gauss, isect_ids_sorted, flatten_ids_sorted);
-    } else {
-        return std::make_tuple(tiles_per_gauss, isect_ids, flatten_ids);
+        isect_ids = isect_ids_sorted;
+        flatten_ids = flatten_ids_sorted;
     }
-    // return std::make_tuple(
-    //     at::Tensor(), at::Tensor(), at::Tensor(),
-    //     at::Tensor()
-    // );
+    return std::make_tuple(
+        tiles_per_gauss, isect_ids, flatten_ids, pbf_id.view({P, 4})
+    );
 }
 
-}
+} // namespace gsplat

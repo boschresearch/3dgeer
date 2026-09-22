@@ -13,6 +13,8 @@ This repo extends the [`rasterization()`](https://docs.gsplat.studio/versions/1.
 - To train/render pinhole camera with distortion, set the distortion parameters to `radial_coeffs`, `tangential_coeffs`, `thin_prism_coeffs`.
 - To train/render fisheye camera with distortion, 
 set the distortion parameters to `radial_coeffs` and set `camera_model="fisheye"`.
+- To train/render an F-theta camera, set `ftheta_coeffs` and
+  `camera_model="ftheta"`.
 
 These are consistent with `gsplat`'s 3DGUT implementation (`with_ut`).
 
